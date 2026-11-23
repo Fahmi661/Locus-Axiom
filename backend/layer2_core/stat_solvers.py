@@ -139,12 +139,8 @@ class StatcheckSolver:
 
         # Decimal precision of reported p
         # Nuijten et al. (2016): reported p has its own rounding precision d_p
-        d_p = 3  # default fallback
-        # If passed as float, determine decimal places from string if available
-        # or calculate minimal step
-        p_rep_step = 0.5 * (10 ** (-3))  # standard 3 decimal places tolerance for p
-        if p_reported < 0.01:
-            p_rep_step = 0.5 * (10 ** (-4))
+        d_p = count_decimals(str(p_reported))
+        p_rep_step = 0.5 * (10 ** (-min(3, max(2, d_p))))
 
         # Check interval overlap: [p_reported - p_rep_step, p_reported + p_rep_step] overlaps [p_min, p_max]
         p_rep_low = max(0.0, p_reported - p_rep_step)

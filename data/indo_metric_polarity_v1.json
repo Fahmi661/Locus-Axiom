@@ -75,6 +75,27 @@
       "h0": "Varians data homogen",
       "decision_rule": "p > 0.05",
       "inversion_warning": "Pada uji Levene, nilai p > 0.05 membuktikan bahwa varians antar-kelompok bersifat homogen."
+    },
+    {
+      "name": "Jarque-Bera",
+      "type": "normality",
+      "h0": "Data berdistribusi normal",
+      "decision_rule": "p > 0.05",
+      "inversion_warning": "Pada uji Jarque-Bera, nilai p > 0.05 menunjukkan data berdistribusi normal (gagal tolak H0). Mengklaim p < 0.05 sebagai normal adalah kesalahan inversi logika prasyarat."
+    },
+    {
+      "name": "Breusch-Pagan",
+      "type": "homoscedasticity",
+      "h0": "Tidak terjadi heteroskedastisitas (homoskedastis)",
+      "decision_rule": "p > 0.05",
+      "inversion_warning": "Pada uji Breusch-Pagan, nilai p > 0.05 membuktikan tidak terjadi heteroskedastisitas (asumsi homoskedastisitas terpenuhi)."
+    },
+    {
+      "name": "Glejser",
+      "type": "homoscedasticity",
+      "h0": "Tidak terjadi heteroskedastisitas (homoskedastis)",
+      "decision_rule": "p > 0.05",
+      "inversion_warning": "Pada uji Glejser, nilai p > 0.05 membuktikan tidak terjadi heteroskedastisitas (asumsi homoskedastisitas terpenuhi)."
     }
   ]
 }

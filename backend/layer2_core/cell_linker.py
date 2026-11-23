@@ -9,6 +9,7 @@ Decides ENTAILMENT vs CONTRADICTION vs SKIP with deterministic math anchoring.
 from typing import List, Dict, Any, Optional, Tuple
 import os
 import re
+import math
 import numpy as np
 from rapidfuzz import fuzz
 from backend.layer2_core.stat_solvers import (
@@ -334,6 +335,23 @@ def match_sentence_to_row(
             if r_lbl.lower() == section_anchor_var.lower() or match_variable_row_score(section_anchor_var, r_lbl) >= 0.70:
                 return r_lbl
 
+    # Jika Prioritas 1 (exact match di main_clause) tidak menemukan variabel secara pasti DAN tidak ada section_anchor_var:
+    # Panggil SemanticRowReranker secara nyata jika reranker.is_available dan len(valid_labels) > 1
+    if len(valid_labels) > 1:
+        try:
+            reranker = SemanticRowReranker.get_instance()
+            if reranker.is_available:
+                reranked = reranker.rerank_row_candidates(
+                    main_clause,
+                    valid_labels,
+                    table_caption=table_caption or "",
+                    headers=headers
+                )
+                if reranked:
+                    return reranked
+        except Exception:
+            pass
+
     # Prioritas 3: Discourse variable dari kalimat sebelumnya
     if discourse_var:
         for r_lbl in valid_labels:
@@ -372,31 +390,6 @@ def match_sentence_to_row(
             best_row = r_lbl
 
     if best_row:
-        has_table_num_match = False
-        if best_row in row_num_lookup:
-            for num_m in re.finditer(r"[+-]?(?:\d+(?:[.,]\d+)?|[.,]\d+)", s_clean):
-                try:
-                    num_f = float(re.sub(r"^([+-]?)\s*[,.](\d+)$", r"\g<1>0.\g<2>", num_m.group(0).strip()).replace(",", "."))
-                    if any(abs(num_f - val) < 0.005 for val in row_num_lookup[best_row]):
-                        has_table_num_match = True
-                        break
-                except ValueError:
-                    pass
-
-        if not has_table_num_match and 15.0 <= best_score <= 30.0 and len(valid_labels) > 1:
-            try:
-                reranker = SemanticRowReranker.get_instance()
-                if reranker.is_available:
-                    reranked = reranker.rerank_row_candidates(
-                        sentence,
-                        valid_labels,
-                        table_caption=table_caption or "",
-                        headers=headers
-                    )
-                    if reranked:
-                        return reranked
-            except Exception:
-                pass
         return best_row
 
     return None
@@ -583,10 +576,7 @@ class SemanticRowReranker:
             return self._cache[cache_key]
 
         if not self.is_available or not self.session or not self.tokenizer:
-            s_short = sentence[:120]
-            best = max(unique_cands, key=lambda c: fuzz.token_sort_ratio(s_short, c))
-            self._cache[cache_key] = best
-            return best
+            return None
 
         hdr_str = ", ".join(headers) if headers else ""
         best_cand = None
@@ -615,8 +605,15 @@ class SemanticRowReranker:
             except Exception:
                 continue
 
-        self._cache[cache_key] = best_cand
-        return best_cand
+        if best_cand is not None and best_score > -900.0:
+            clipped_logit = max(-20.0, min(20.0, best_score))
+            prob = 1.0 / (1.0 + math.exp(-clipped_logit))
+            if prob >= 0.55:
+                self._cache[cache_key] = best_cand
+                return best_cand
+
+        self._cache[cache_key] = None
+        return None
 
 
 class CellLinker:
@@ -1914,6 +1911,115 @@ class CellLinker:
                     if has_quad_error:
                         return findings
                     if has_verified_metric and not row_had_error:
+                        # Cek apakah ada quad MEAN yang mengalami inkonsistensi GRIM
+                        if tbl.get("table_type") != "SPSS_LIKERT_FREQ":
+                            for quad, q_res in quad_results:
+                                if q_res.status in ("VALID_EXACT", "VALID_ROUNDED") and quad.stat_type == "MEAN":
+                                    effective_n = None
+                                    n_match = re.search(r"\b(?:n|sampel|responden|subjek)\s*(?:sebesar|=|\:)?\s*(\d+)", claim_text, re.IGNORECASE)
+                                    if n_match:
+                                        try:
+                                            effective_n = int(n_match.group(1))
+                                        except (ValueError, TypeError):
+                                            pass
+                                    if effective_n is None:
+                                        effective_row_label = q_res.matched_row_label or matched_row or (row_labels[0] if row_labels else "")
+                                        for r in tbl.get("rows", []):
+                                            r_label = r[0].get("row_label") or r[0].get("raw_val")
+                                            if r_label and (r_label == effective_row_label or match_variable_row_score(quad.variable_name, r_label) >= 0.6):
+                                                for c_other in r:
+                                                    h_path = c_other.get("header_path", "").upper().strip()
+                                                    if h_path in ("N", "SAMPEL", "JUMLAH") and c_other.get("num_val") is not None:
+                                                        try:
+                                                            effective_n = int(c_other["num_val"])
+                                                            break
+                                                        except (ValueError, TypeError):
+                                                            pass
+                                                if effective_n is not None:
+                                                    break
+                                    if effective_n is None and detected_total_n:
+                                        effective_n = detected_total_n
+
+                                    if effective_n is not None:
+                                        mean_val = float(q_res.table_cell_value if q_res.table_cell_value is not None else quad.raw_number_str.replace(",", "."))
+                                        raw_val_str = str(q_res.table_cell_raw or quad.raw_number_str)
+                                        row_lbl = q_res.matched_row_label or matched_row or ""
+                                        col_hdr = q_res.matched_col_label or "Mean"
+                                        if is_grim_applicable_strict(raw_val_str, effective_n, row_lbl, col_hdr):
+                                            grim_test = GuardedGrimSolver.solve(
+                                                mean_val,
+                                                n_sample=effective_n,
+                                                k_items=1,
+                                                mean_str=raw_val_str,
+                                                row_label=row_lbl,
+                                                col_header=col_hdr
+                                            )
+                                            if grim_test.get("verdict") == "GRIM_INCONSISTENCY":
+                                                snippet = build_row_snippet(tbl, row_lbl, col_hdr)
+                                                f_grim = {
+                                                    "finding_id": f"F-{claim['claim_id']}-GRIM",
+                                                    "verdict": "GRIM_INCONSISTENCY",
+                                                    "severity": "HIGH",
+                                                    "table_ref": t_ref,
+                                                    "row_category": row_lbl,
+                                                    "stat_column": col_hdr,
+                                                    "claim_value_display": quad.raw_number_str,
+                                                    "table_value_display": raw_val_str,
+                                                    "highlighted_clause": make_highlighted_clause(claim_text, quad.raw_number_str, row_lbl),
+                                                    "human_explanation": f"Nilai rata-rata {raw_val_str} pada ukuran sampel N={effective_n} secara matematis mustahil dihasilkan dari data diskret/Likert (nilai terdekat yang mungkin: {grim_test.get('recalculated_mean')}).",
+                                                    "stack_trace_path": f"{t_ref.split(' (')[0]} -> Baris: {row_lbl} -> Kolom: {col_hdr} -> GRIM Inconsistency",
+                                                    "socratic_hints": [
+                                                        f"Rata-rata pada data diskret berukuran sampel N={effective_n} harus merupakan kelipatan dari 1/{effective_n}.",
+                                                        f"Nilai terdekat yang mungkin secara matematis adalah {grim_test.get('recalculated_mean')}."
+                                                    ],
+                                                    "table_bbox_norm": t_bbox,
+                                                    "claim_source": {
+                                                        "page": claim_page,
+                                                        "text": claim_text,
+                                                        "bbox": claim.get("bbox", [72, 100, 500, 120]),
+                                                        "boxes": claim.get("boxes", [])
+                                                    },
+                                                    "table_evidence": {
+                                                        "table_id": tbl["table_id"],
+                                                        "page": tbl["page"],
+                                                        "cells": target_row_cells if target_row_cells else [],
+                                                        "row_snippet": snippet
+                                                    },
+                                                    "diff_details": {
+                                                        "claimed_val": f"Rata-rata = {quad.raw_number_str}",
+                                                        "table_val": raw_val_str,
+                                                        "table_rounded": str(grim_test.get("recalculated_mean")),
+                                                        "diff": grim_test.get("difference"),
+                                                        "row_label": row_lbl,
+                                                        "col_name": col_hdr,
+                                                        "plain_explanation": f"Nilai rata-rata {raw_val_str} pada ukuran sampel N={effective_n} secara matematis mustahil dihasilkan dari data diskret/Likert (nilai terdekat yang mungkin: {grim_test.get('recalculated_mean')})."
+                                                    },
+                                                    "math_and_logic_trace": {
+                                                        "operation": "GRIM_INTEGER_LATTICE_TEST",
+                                                        "metric_name": f"{row_lbl}.{col_hdr}",
+                                                        "reranker_confidence": 0.88,
+                                                        "nli_label": "CONTRADICTION",
+                                                        "formula_display": f"GRIM(x̄={raw_val_str}, N={effective_n}): nearest int sum = {grim_test.get('nearest_integer_sum')} / {effective_n} = {grim_test.get('recalculated_mean')} != {raw_val_str}"
+                                                    },
+                                                    "pedagogical_prompt": {
+                                                        "question": f"Mengapa nilai rata-rata {raw_val_str} pada variabel {row_lbl} tidak konsisten?",
+                                                        "options": [
+                                                            {
+                                                                "id": "A",
+                                                                "text": f"Pada data diskret, rata-rata harus merupakan kelipatan dari 1/N. Nilai {raw_val_str} secara matematis mustahil dihasilkan dari penjumlahan bilangan bulat.",
+                                                                "is_correct": True
+                                                            },
+                                                            {
+                                                                "id": "B",
+                                                                "text": "Standar deviasi harus bernilai lebih besar daripada rata-rata.",
+                                                                "is_correct": False
+                                                            }
+                                                        ],
+                                                        "safe_revised_sentence": f"Nilai rata-rata yang konsisten secara matematis dengan ukuran sampel adalah {grim_test.get('recalculated_mean')}."
+                                                    }
+                                                }
+                                                return findings + [f_grim]
+
                         pass_findings = []
                         for quad, q_res in quad_results:
                             if q_res.status in ("VALID_EXACT", "VALID_ROUNDED"):

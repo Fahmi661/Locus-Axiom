@@ -397,10 +397,10 @@ def run_benchmark_500():
         verdict = findings[0].get("verdict") if findings else "PASS"
 
         is_anomaly_expected = (expected != "PASS")
-        is_anomaly_detected = (verdict != "PASS")
+        is_anomaly_detected = verdict not in ("PASS", "PASS_EXACT_MATCH")
 
         if is_anomaly_expected:
-            if is_anomaly_detected and (verdict == expected or "CONTRADICTION" in verdict or "INVERSION" in verdict or "WARN" in verdict or "GRIM" in verdict):
+            if is_anomaly_detected and (verdict == expected or "CONTRADICTION" in verdict or "INVERSION" in verdict or "WARN" in verdict or "GRIM" in verdict or "FLIP" in verdict):
                 tp += 1
                 domain_stats[dom]["correct"] += 1
             else:

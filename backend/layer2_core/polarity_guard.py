@@ -47,14 +47,14 @@ class PolarityGuard:
     def check_prerequisite_inversion(self, text: str, header_or_test: str = "") -> Optional[Dict[str, Any]]:
         """
         Checks whether the claim contains an inverted prerequisite logic for
-        Kolmogorov-Smirnov, Shapiro-Wilk, or Levene tests.
+        normality (Kolmogorov-Smirnov, Shapiro-Wilk, Jarque-Bera),
+        homogeneity (Levene), or homoscedasticity (Breusch-Pagan, Glejser) tests.
         Example error: 'Data berdistribusi normal karena nilai Sig. 0,012 < 0,05'
         """
         combined = f"{header_or_test} {text}".lower()
 
-        # 1. Negation check: If the text explicitly states a non-normal or non-homogenous result
-        # (e.g. 'tidak normal', 'tidak berdistribusi normal', 'menolak h0', 'h0 ditolak', etc.),
-        # this is statistically ACCURATE when p < 0.05 (reject H0). Return None (VALID).
+        # 1. Negation check: If the text explicitly states a non-normal, non-homogenous,
+        # or heteroskedasticity violation result, this is statistically ACCURATE when p < 0.05.
         negation_indicators = [
             "tidak normal",
             "tidak berdistribusi normal",
@@ -73,20 +73,29 @@ class PolarityGuard:
         if any(neg in combined for neg in negation_indicators):
             return None
 
+        if re.search(r"\b(?:terjadi|adanya|terdapat)\s+heteroskedastisitas\b", combined) and not re.search(r"\b(?:tidak|bebas|bukan)\s+(?:terjadi\s+)?heteroskedastisitas\b", combined):
+            return None
+
         for test in self.prerequisite_tests:
             test_name = test["name"].lower()
+            t_type = test.get("type", "").lower()
             has_test = (
                 test_name in combined
-                or ("normalitas" in combined and test["type"] == "normality")
-                or ("homogenitas" in combined and test["type"] == "homogeneity")
+                or ("normalitas" in combined and t_type == "normality")
+                or ("homogenitas" in combined and t_type == "homogeneity")
+                or (("heteroskedastisitas" in combined or "homoskedastisitas" in combined) and t_type == "homoscedasticity")
             )
 
             if has_test:
-                # Check for normality or homogeneity conclusion
-                if test["type"] == "normality":
+                # Check for normality, homogeneity, or homoscedasticity conclusion
+                if t_type == "normality":
                     normal_claim = any(w in combined for w in ["normal", "kenormalan"])
-                else:
+                elif t_type == "homogeneity":
                     normal_claim = any(w in combined for w in ["homogen", "kehomogenan"])
+                elif t_type == "homoscedasticity":
+                    normal_claim = any(w in combined for w in ["homoskedastis", "bebas heteroskedastisitas", "tidak terjadi heteroskedastisitas", "asumsi terpenuhi"])
+                else:
+                    normal_claim = any(w in combined for w in ["normal", "homogen", "asumsi terpenuhi"])
 
                 # Check if claiming normal/homogen based on p LESS than 0.05 (< 0.05)
                 # Ensure it is NOT greater than (> 0.05)
@@ -97,14 +106,44 @@ class PolarityGuard:
 
                 less_than_pattern = bool(re.search(r"(\bsig\.?|\bp-?value|\bp|\bnilai)?\s*([<≤]|lebih\s+kecil|kurang\s+dari)\s*(0[,.]05|0[,.]01)", combined))
 
+                # Ekstrak angka numerik setelah sig. / p-value / p =
+                p_num_match = re.search(r"(?:sig\.?|p-?value|\bp)\s*(?:=|sebesar|adalah)?\s*([0-9]+[,.][0-9]+)", combined)
+                if p_num_match:
+                    try:
+                        p_num = float(p_num_match.group(1).replace(",", "."))
+                        if 0.0 <= p_num < 0.05:
+                            less_than_pattern = True
+                        elif p_num >= 0.05:
+                            continue
+                    except ValueError:
+                        pass
+
                 if normal_claim and less_than_pattern:
+                    # Semantic context guard via mDeBERTa-v3 NLI
+                    try:
+                        from backend.layer2_core.cell_linker import NeuralNliEngine
+                        nli = NeuralNliEngine.get_instance()
+                        if nli and getattr(nli, "session", None) is not None:
+                            nli_res = nli.predict_nli(
+                                premise=text,
+                                hypothesis="Data tidak normal atau melanggar asumsi"
+                            )
+                            if (
+                                nli_res.get("nli_label") == "ENTAILMENT"
+                                and nli_res.get("confidence", 0.0) >= 0.80
+                            ):
+                                return None
+                    except Exception:
+                        pass
+
+                    claimed_concept = "Normal" if t_type == "normality" else ("Homogen" if t_type == "homogeneity" else "Homoskedastis")
                     return {
                         "verdict": "PREREQUISITE_LOGIC_INVERSION",
                         "severity": "CRITICAL",
                         "test_detected": test["name"],
                         "rule_violated": test["decision_rule"],
                         "explanation": test["inversion_warning"],
-                        "formula_display": f"{test['name']}: Sig < 0.05 implies reject H0 (Data NOT {test['type'].title()}) != Text Claim (Normal)"
+                        "formula_display": f"{test['name']}: Sig < 0.05 implies reject H0 (Data NOT {claimed_concept}) != Text Claim ({claimed_concept})"
                     }
         return None
 
