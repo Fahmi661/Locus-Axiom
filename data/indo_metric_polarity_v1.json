@@ -1,0 +1,80 @@
+{
+  "version": "1.1.0",
+  "higher_is_better": [
+    "akurasi",
+    "accuracy",
+    "presisi",
+    "precision",
+    "recall",
+    "f1-score",
+    "f1",
+    "map@50",
+    "auc-roc",
+    "r-squared",
+    "adjusted r2",
+    "psnr",
+    "ssim",
+    "bleu",
+    "rouge",
+    "skor sus",
+    "net promoter score",
+    "n-gain",
+    "cronbach alpha",
+    "kmo",
+    "aiken v",
+    "keakuratan",
+    "tingkat ketepatan",
+    "daya ramal",
+    "skor keberhasilan"
+  ],
+  "lower_is_better": [
+    "rmse",
+    "mae",
+    "mape",
+    "mse",
+    "loss",
+    "perplexity",
+    "word error rate",
+    "wer",
+    "cer",
+    "latensi",
+    "waktu komputasi",
+    "response time",
+    "false positive rate",
+    "fpr",
+    "nasa-tlx",
+    "error rate",
+    "tingkat kesalahan",
+    "kesalahan prediksi",
+    "galat",
+    "tingkat galat",
+    "tingkat putus sekolah",
+    "skor kecemasan dass-21",
+    "aic",
+    "bic",
+    "vif"
+  ],
+  "prerequisite_tests": [
+    {
+      "name": "Kolmogorov-Smirnov",
+      "type": "normality",
+      "h0": "Data berdistribusi normal",
+      "decision_rule": "p > 0.05",
+      "inversion_warning": "Pada uji Kolmogorov-Smirnov, p > 0.05 menunjukkan data berdistribusi normal (gagal tolak H0). Mengklaim p < 0.05 sebagai normal adalah kesalahan inversi logika prasyarat."
+    },
+    {
+      "name": "Shapiro-Wilk",
+      "type": "normality",
+      "h0": "Data berdistribusi normal",
+      "decision_rule": "p > 0.05",
+      "inversion_warning": "Pada uji Shapiro-Wilk, nilai p > 0.05 membuktikan asumsi normalitas terpenuhi."
+    },
+    {
+      "name": "Levene",
+      "type": "homogeneity",
+      "h0": "Varians data homogen",
+      "decision_rule": "p > 0.05",
+      "inversion_warning": "Pada uji Levene, nilai p > 0.05 membuktikan bahwa varians antar-kelompok bersifat homogen."
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Large Model weights & ONNX binaries (> 100MB violates GitHub limits)
+data/models/
+*.onnx
+*.safetensors
+*.bin
+*.pt
+*.pth
+
+# Uploaded and rendered user files (Zero-PII & storage savings)
+data/uploads/*
+!data/uploads/.gitkeep
+data/rendered_pages/*
+!data/rendered_pages/.gitkeep
+
+# Temporary and scratch folders
+scratch/
+tmp/
+temp/
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE and editor settings
+.vscode/
+.idea/
+*.swp
+*.swo

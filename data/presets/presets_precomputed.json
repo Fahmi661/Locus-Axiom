@@ -1,0 +1,997 @@
+[
+  {
+    "id": "PRESET-01",
+    "title": "Evaluasi Model ML (Inversi Polaritas RMSE)",
+    "desc": "Klaim model Random Forest terbaik karena RMSE tertinggi 0,92 (padahal RMSE adalah metrik galat).",
+    "filename": "preset_1_ml_polarity.pdf",
+    "page_image": "/static/pages/preset_1/page_1.png",
+    "bundle": {
+      "document_id": "PRESET-01",
+      "processing_time_ms": 185.4,
+      "summary_counts": {
+        "total_claims_checked": 5,
+        "pass_count": 1,
+        "warn_rounding_count": 0,
+        "contradiction_or_flip_count": 1,
+        "skip_nei_count": 3
+      },
+      "findings": [
+        {
+          "finding_id": "F-C_1_4-POL",
+          "verdict": "POLARITY_INVERSION_ERROR",
+          "severity": "HIGH",
+          "claim_source": {
+            "page": 1,
+            "text": "Berdasarkan Tabel 4.3 di atas, Model Random Forest memiliki kinerja prediksi terbaik karena menghasilkan nilai RMSE tertinggi sebesar 0,92 dibandingkan model lainnya.",
+            "bbox": [
+              31.2,
+              289.9,
+              564.1,
+              316.9
+            ],
+            "boxes": [
+              [
+                31.2,
+                289.9,
+                564.1,
+                299.9
+              ],
+              [
+                31.2,
+                306.9,
+                258.9,
+                316.9
+              ]
+            ]
+          },
+          "table_evidence": {
+            "table_id": "Tabel_1_1",
+            "page": 1,
+            "cells": [
+              {
+                "row": 1,
+                "col": 2,
+                "header_path": "RMSE",
+                "row_label": "Random Forest",
+                "raw_val": "0,92",
+                "num_val": 0.92,
+                "decimals": 2,
+                "bbox": [
+                  218.0,
+                  215.3,
+                  235.5,
+                  224.3
+                ]
+              },
+              {
+                "row": 2,
+                "col": 2,
+                "header_path": "RMSE",
+                "row_label": "XGBoost",
+                "raw_val": "0,41",
+                "num_val": 0.41,
+                "decimals": 2,
+                "bbox": [
+                  218.0,
+                  235.1,
+                  235.5,
+                  244.1
+                ]
+              },
+              {
+                "row": 3,
+                "col": 2,
+                "header_path": "RMSE",
+                "row_label": "Support Vector Machine",
+                "raw_val": "0,57",
+                "num_val": 0.57,
+                "decimals": 2,
+                "bbox": [
+                  218.0,
+                  254.9,
+                  235.5,
+                  263.9
+                ]
+              }
+            ],
+            "row_snippet": {
+              "table_id": "Tabel_1_1",
+              "page": 1,
+              "row_label": "XGBoost",
+              "headers": [
+                "Model Algoritma",
+                "RMSE",
+                "MAE",
+                "Akurasi"
+              ],
+              "cells": [
+                {
+                  "header": "Model Algoritma",
+                  "raw_val": "XGBoost",
+                  "num_val": null,
+                  "is_target": false,
+                  "bbox": [
+                    31.2,
+                    235.1,
+                    67.2,
+                    244.1
+                  ]
+                },
+                {
+                  "header": "RMSE",
+                  "raw_val": "0,41",
+                  "num_val": 0.41,
+                  "is_target": true,
+                  "bbox": [
+                    218.0,
+                    235.1,
+                    235.5,
+                    244.1
+                  ]
+                },
+                {
+                  "header": "MAE",
+                  "raw_val": "0,35",
+                  "num_val": 0.35,
+                  "is_target": false,
+                  "bbox": [
+                    331.4,
+                    235.1,
+                    348.9,
+                    244.1
+                  ]
+                },
+                {
+                  "header": "Akurasi",
+                  "raw_val": "0,91",
+                  "num_val": 0.91,
+                  "is_target": false,
+                  "bbox": [
+                    459.0,
+                    235.1,
+                    476.5,
+                    244.1
+                  ]
+                }
+              ]
+            }
+          },
+          "diff_details": {
+            "claimed_val": "Random Forest (RMSE)",
+            "table_val": "XGBoost (0.41)",
+            "table_rounded": "0.41",
+            "diff": 0,
+            "row_label": "XGBoost",
+            "col_name": "RMSE",
+            "plain_explanation": "Metrik 'RMSE' adalah metrik galat (error) di mana nilai terendah (0.41) adalah yang terbaik, bukan nilai tertinggi."
+          },
+          "math_and_logic_trace": {
+            "operation": "SUPERLATIVE_ARGMIN",
+            "metric_name": "RMSE",
+            "metric_polarity": "LOWER_IS_BETTER (-1)",
+            "reranker_confidence": 0.992,
+            "nli_label": "CONTRADICTION",
+            "nli_probabilities": {
+              "entailment": 0.0037,
+              "neutral": 0.992,
+              "contradiction": 0.0043
+            },
+            "formula_display": "ArgBest(RMSE, polarity=-1) = min(0.92 (Random Forest), 0.41 (XGBoost), 0.57 (Support Vector Machine)) = 0.41 (XGBoost)"
+          },
+          "pedagogical_prompt": {
+            "question": "Mengapa klaim performa pada metrik 'RMSE' bertentangan dengan Tabel_1_1?",
+            "options": [
+              {
+                "id": "A",
+                "text": "RMSE adalah metrik galat (error): nilai yang lebih kecil (terendah) menunjukkan kinerja yang lebih baik.",
+                "is_correct": true
+              },
+              {
+                "id": "B",
+                "text": "Nilai angka 0.41 salah dibaca dari kolom akurasi.",
+                "is_correct": false
+              }
+            ],
+            "safe_revised_sentence": "Model XGBoost memiliki kinerja prediksi terbaik pada Tabel_1_1 karena menghasilkan nilai galat RMSE terendah sebesar 0.41."
+          }
+        }
+      ],
+      "tables": [
+        {
+          "table_id": "Tabel_1_1",
+          "page": 1,
+          "bbox": [
+            28.4,
+            187.1,
+            538.6,
+            269.3
+          ],
+          "num_rows": 3,
+          "num_cols": 4,
+          "header_paths": [
+            "Model Algoritma",
+            "RMSE",
+            "MAE",
+            "Akurasi"
+          ],
+          "rows": [
+            [
+              {
+                "row": 1,
+                "col": 1,
+                "header_path": "Model Algoritma",
+                "row_label": "Random Forest",
+                "raw_val": "Random Forest",
+                "num_val": null,
+                "decimals": 0,
+                "bbox": [
+                  31.2,
+                  215.3,
+                  93.2,
+                  224.3
+                ]
+              },
+              {
+                "row": 1,
+                "col": 2,
+                "header_path": "RMSE",
+                "row_label": "Random Forest",
+                "raw_val": "0,92",
+                "num_val": 0.92,
+                "decimals": 2,
+                "bbox": [
+                  218.0,
+                  215.3,
+                  235.5,
+                  224.3
+                ]
+              },
+              {
+                "row": 1,
+                "col": 3,
+                "header_path": "MAE",
+                "row_label": "Random Forest",
+                "raw_val": "0,78",
+                "num_val": 0.78,
+                "decimals": 2,
+                "bbox": [
+                  331.4,
+                  215.3,
+                  348.9,
+                  224.3
+                ]
+              },
+              {
+                "row": 1,
+                "col": 4,
+                "header_path": "Akurasi",
+                "row_label": "Random Forest",
+                "raw_val": "0,84",
+                "num_val": 0.84,
+                "decimals": 2,
+                "bbox": [
+                  459.0,
+                  215.3,
+                  476.5,
+                  224.3
+                ]
+              }
+            ],
+            [
+              {
+                "row": 2,
+                "col": 1,
+                "header_path": "Model Algoritma",
+                "row_label": "XGBoost",
+                "raw_val": "XGBoost",
+                "num_val": null,
+                "decimals": 0,
+                "bbox": [
+                  31.2,
+                  235.1,
+                  67.2,
+                  244.1
+                ]
+              },
+              {
+                "row": 2,
+                "col": 2,
+                "header_path": "RMSE",
+                "row_label": "XGBoost",
+                "raw_val": "0,41",
+                "num_val": 0.41,
+                "decimals": 2,
+                "bbox": [
+                  218.0,
+                  235.1,
+                  235.5,
+                  244.1
+                ]
+              },
+              {
+                "row": 2,
+                "col": 3,
+                "header_path": "MAE",
+                "row_label": "XGBoost",
+                "raw_val": "0,35",
+                "num_val": 0.35,
+                "decimals": 2,
+                "bbox": [
+                  331.4,
+                  235.1,
+                  348.9,
+                  244.1
+                ]
+              },
+              {
+                "row": 2,
+                "col": 4,
+                "header_path": "Akurasi",
+                "row_label": "XGBoost",
+                "raw_val": "0,91",
+                "num_val": 0.91,
+                "decimals": 2,
+                "bbox": [
+                  459.0,
+                  235.1,
+                  476.5,
+                  244.1
+                ]
+              }
+            ],
+            [
+              {
+                "row": 3,
+                "col": 1,
+                "header_path": "Model Algoritma",
+                "row_label": "Support Vector Machine",
+                "raw_val": "Support Vector Machine",
+                "num_val": null,
+                "decimals": 0,
+                "bbox": [
+                  31.2,
+                  254.9,
+                  127.7,
+                  263.9
+                ]
+              },
+              {
+                "row": 3,
+                "col": 2,
+                "header_path": "RMSE",
+                "row_label": "Support Vector Machine",
+                "raw_val": "0,57",
+                "num_val": 0.57,
+                "decimals": 2,
+                "bbox": [
+                  218.0,
+                  254.9,
+                  235.5,
+                  263.9
+                ]
+              },
+              {
+                "row": 3,
+                "col": 3,
+                "header_path": "MAE",
+                "row_label": "Support Vector Machine",
+                "raw_val": "0,49",
+                "num_val": 0.49,
+                "decimals": 2,
+                "bbox": [
+                  331.4,
+                  254.9,
+                  348.9,
+                  263.9
+                ]
+              },
+              {
+                "row": 3,
+                "col": 4,
+                "header_path": "Akurasi",
+                "row_label": "Support Vector Machine",
+                "raw_val": "0,86",
+                "num_val": 0.86,
+                "decimals": 2,
+                "bbox": [
+                  459.0,
+                  254.9,
+                  476.5,
+                  263.9
+                ]
+              }
+            ]
+          ]
+        }
+      ],
+      "page_images": {
+        "1": "/static/pages/preset_1/page_1.png"
+      },
+      "page_dimensions": {
+        "1": [
+          595.28,
+          841.89
+        ]
+      }
+    }
+  },
+  {
+    "id": "PRESET-02",
+    "title": "Uji Prasyarat Normalitas (Jebakan Sidang)",
+    "desc": "Klaim data normal karena Sig. 0,018 < 0,05 pada Kolmogorov-Smirnov (inversi logika H0).",
+    "filename": "preset_2_normality_inversion.pdf",
+    "page_image": "/static/pages/preset_2/page_1.png",
+    "bundle": {
+      "document_id": "PRESET-02",
+      "processing_time_ms": 185.4,
+      "summary_counts": {
+        "total_claims_checked": 6,
+        "pass_count": 2,
+        "warn_rounding_count": 0,
+        "contradiction_or_flip_count": 1,
+        "skip_nei_count": 3
+      },
+      "findings": [
+        {
+          "finding_id": "F-C_1_5-INV",
+          "verdict": "PREREQUISITE_LOGIC_INVERSION",
+          "severity": "CRITICAL",
+          "claim_source": {
+            "page": 1,
+            "text": "Sebagaimana tertera pada Tabel 4.1, data penelitian berdistribusi normal karena nilai Sig. pada uji Kolmogorov-Smirnov untuk variabel Kecemasan Akademik diperoleh sebesar 0,018 < 0,05.",
+            "bbox": [
+              31.2,
+              270.0,
+              564.1,
+              297.0
+            ],
+            "boxes": [
+              [
+                31.2,
+                270.0,
+                564.1,
+                280.0
+              ],
+              [
+                31.2,
+                287.0,
+                350.3,
+                297.0
+              ]
+            ]
+          },
+          "table_evidence": {
+            "table_id": "Tabel_1_1",
+            "page": 1,
+            "cells": [
+              {
+                "row": 1,
+                "col": 1,
+                "header_path": "Variabel Penelitian",
+                "row_label": "Kecemasan Akademik (Y)",
+                "raw_val": "Kecemasan Akademik (Y)",
+                "num_val": null,
+                "decimals": 0,
+                "bbox": [
+                  31.2,
+                  215.3,
+                  135.2,
+                  224.3
+                ]
+              },
+              {
+                "row": 1,
+                "col": 2,
+                "header_path": "Kolmogorov-Smirnov (Sig.)",
+                "row_label": "Kecemasan Akademik (Y)",
+                "raw_val": "0,018",
+                "num_val": 0.018,
+                "decimals": 3,
+                "bbox": [
+                  272.2,
+                  215.3,
+                  294.7,
+                  224.3
+                ]
+              },
+              {
+                "row": 1,
+                "col": 3,
+                "header_path": "Shapiro-Wilk (Sig.)",
+                "row_label": "Kecemasan Akademik (Y)",
+                "raw_val": "0,012",
+                "num_val": 0.012,
+                "decimals": 3,
+                "bbox": [
+                  442.3,
+                  215.3,
+                  464.8,
+                  224.3
+                ]
+              }
+            ],
+            "row_snippet": {
+              "table_id": "Tabel_1_1",
+              "page": 1,
+              "row_label": "Kolmogorov-Smirnov",
+              "headers": [
+                "Variabel Penelitian",
+                "Kolmogorov-Smirnov (Sig.)",
+                "Shapiro-Wilk (Sig.)"
+              ],
+              "cells": []
+            }
+          },
+          "diff_details": {
+            "claimed_val": "Data berdistribusi normal (p < 0,05)",
+            "table_val": "Tolak H0: Data TIDAK berdistribusi normal",
+            "table_rounded": "Sig. < 0,05",
+            "diff": 0,
+            "row_label": "Kolmogorov-Smirnov",
+            "col_name": "Signifikansi (Sig.)",
+            "plain_explanation": "Pada uji Kolmogorov-Smirnov, nilai Sig. < 0,05 menolak H0 (berarti data TIDAK normal), namun teks narasi justru menyimpulkan data berdistribusi normal."
+          },
+          "math_and_logic_trace": {
+            "operation": "PREREQUISITE_ASSUMPTION_CHECK",
+            "metric_name": "Kolmogorov-Smirnov",
+            "metric_polarity": "INVERTED_RULE (p > 0.05)",
+            "reranker_confidence": 0.95,
+            "nli_label": "CONTRADICTION",
+            "nli_probabilities": {
+              "entailment": 0.036,
+              "neutral": 0.9416,
+              "contradiction": 0.0225
+            },
+            "formula_display": "Kolmogorov-Smirnov: Sig < 0.05 implies reject H0 (Data NOT Normality) != Text Claim (Normal)"
+          },
+          "pedagogical_prompt": {
+            "question": "Mengapa kesimpulan uji Kolmogorov-Smirnov pada klaim di atas keliru?",
+            "options": [
+              {
+                "id": "A",
+                "text": "Pada uji asumsi (Kolmogorov-Smirnov), H0 menyatakan data normal/homogen. Jika Sig. < 0,05, H0 DITOLAK (berarti data TIDAK normal/homogen).",
+                "is_correct": true
+              },
+              {
+                "id": "B",
+                "text": "Nilai Sig. harus selalu dibandingkan dengan alpha 0,01, bukan 0,05.",
+                "is_correct": false
+              }
+            ],
+            "safe_revised_sentence": "Berdasarkan hasil uji Kolmogorov-Smirnov, diperoleh nilai Sig. yang lebih kecil dari 0,05 sehingga asumsi normalitas/homogenitas TIDAK terpenuhi (H0 ditolak)."
+          }
+        }
+      ],
+      "tables": [
+        {
+          "table_id": "Tabel_1_1",
+          "page": 1,
+          "bbox": [
+            28.4,
+            187.1,
+            538.6,
+            249.4
+          ],
+          "num_rows": 2,
+          "num_cols": 3,
+          "header_paths": [
+            "Variabel Penelitian",
+            "Kolmogorov-Smirnov (Sig.)",
+            "Shapiro-Wilk (Sig.)"
+          ],
+          "rows": [
+            [
+              {
+                "row": 1,
+                "col": 1,
+                "header_path": "Variabel Penelitian",
+                "row_label": "Kecemasan Akademik (Y)",
+                "raw_val": "Kecemasan Akademik (Y)",
+                "num_val": null,
+                "decimals": 0,
+                "bbox": [
+                  31.2,
+                  215.3,
+                  135.2,
+                  224.3
+                ]
+              },
+              {
+                "row": 1,
+                "col": 2,
+                "header_path": "Kolmogorov-Smirnov (Sig.)",
+                "row_label": "Kecemasan Akademik (Y)",
+                "raw_val": "0,018",
+                "num_val": 0.018,
+                "decimals": 3,
+                "bbox": [
+                  272.2,
+                  215.3,
+                  294.7,
+                  224.3
+                ]
+              },
+              {
+                "row": 1,
+                "col": 3,
+                "header_path": "Shapiro-Wilk (Sig.)",
+                "row_label": "Kecemasan Akademik (Y)",
+                "raw_val": "0,012",
+                "num_val": 0.012,
+                "decimals": 3,
+                "bbox": [
+                  442.3,
+                  215.3,
+                  464.8,
+                  224.3
+                ]
+              }
+            ],
+            [
+              {
+                "row": 2,
+                "col": 1,
+                "header_path": "Variabel Penelitian",
+                "row_label": "Efikasi Diri (X)",
+                "raw_val": "Efikasi Diri (X)",
+                "num_val": null,
+                "decimals": 0,
+                "bbox": [
+                  31.2,
+                  235.1,
+                  88.2,
+                  244.1
+                ]
+              },
+              {
+                "row": 2,
+                "col": 2,
+                "header_path": "Kolmogorov-Smirnov (Sig.)",
+                "row_label": "Efikasi Diri (X)",
+                "raw_val": "0,064",
+                "num_val": 0.064,
+                "decimals": 3,
+                "bbox": [
+                  272.2,
+                  235.1,
+                  294.7,
+                  244.1
+                ]
+              },
+              {
+                "row": 2,
+                "col": 3,
+                "header_path": "Shapiro-Wilk (Sig.)",
+                "row_label": "Efikasi Diri (X)",
+                "raw_val": "0,071",
+                "num_val": 0.071,
+                "decimals": 3,
+                "bbox": [
+                  442.3,
+                  235.1,
+                  464.8,
+                  244.1
+                ]
+              }
+            ]
+          ]
+        }
+      ],
+      "page_images": {
+        "1": "/static/pages/preset_2/page_1.png"
+      },
+      "page_dimensions": {
+        "1": [
+          595.28,
+          841.89
+        ]
+      }
+    }
+  },
+  {
+    "id": "PRESET-03",
+    "title": "Uji-t Eksperimen (Decision Flip Statcheck)",
+    "desc": "Laporan t(58) = 2,41 dengan p = 0,002 (rekalkulasi eksak p = 0,019, ketidakkonsistenan signifikan).",
+    "filename": "preset_3_statcheck_grim.pdf",
+    "page_image": "/static/pages/preset_3/page_1.png",
+    "bundle": {
+      "document_id": "PRESET-03",
+      "processing_time_ms": 185.4,
+      "summary_counts": {
+        "total_claims_checked": 5,
+        "pass_count": 1,
+        "warn_rounding_count": 1,
+        "contradiction_or_flip_count": 0,
+        "skip_nei_count": 3
+      },
+      "findings": [
+        {
+          "finding_id": "F-C_1_4-STAT",
+          "verdict": "WARN_ROUNDING",
+          "severity": "MEDIUM",
+          "claim_source": {
+            "page": 1,
+            "text": "Berdasarkan Tabel 4.5, penerapan media pembelajaran inovatif berpengaruh signifikan terhadap hasil belajar siswa dengan nilai t(58) = 2,41 dan nilai signifikansi p = 0,002.",
+            "bbox": [
+              31.2,
+              270.0,
+              564.1,
+              297.0
+            ],
+            "boxes": [
+              [
+                31.2,
+                270.0,
+                564.1,
+                280.0
+              ],
+              [
+                31.2,
+                287.0,
+                297.9,
+                297.0
+              ]
+            ]
+          },
+          "table_evidence": {
+            "table_id": "Tabel_1_1",
+            "page": 1,
+            "cells": [
+              {
+                "row": 2,
+                "col": 5,
+                "header_path": "Uji-t (df=58)",
+                "row_label": "Kelompok Eksperimen",
+                "raw_val": "t = 2,41 (p = 0,002)",
+                "num_val": 2.41,
+                "decimals": 2,
+                "bbox": [
+                  443.6,
+                  235.1,
+                  520.2,
+                  244.1
+                ]
+              }
+            ],
+            "row_snippet": {
+              "table_id": "Tabel_1_1",
+              "page": 1,
+              "row_label": "t(58)",
+              "headers": [
+                "Kelompok",
+                "N",
+                "Rata-rata Pretest Rata-rata Posttest",
+                "Rata-rata Pretest Rata-rata Posttest",
+                "Uji-t (df=58)"
+              ],
+              "cells": []
+            }
+          },
+          "diff_details": {
+            "claimed_val": "p = 0.002",
+            "table_val": "p_recalc = 0.01915",
+            "table_rounded": "0.01915",
+            "diff": -0.0171,
+            "row_label": "t(58)",
+            "col_name": "Sig. / p-value",
+            "plain_explanation": "Nilai p yang dilaporkan (0.002) tidak konsisten dengan fungsi distribusi t(58) = 2.41 (rekalkulasi eksak: p = 0.01915)."
+          },
+          "math_and_logic_trace": {
+            "operation": "STATCHECK_INTERVAL_RECALCULATION",
+            "metric_name": "t(58)",
+            "reranker_confidence": 0.98,
+            "nli_label": "NEUTRAL",
+            "nli_probabilities": {
+              "entailment": 0.021,
+              "neutral": 0.9723,
+              "contradiction": 0.0067
+            },
+            "formula_display": "t(58) = 2.41 => p_recalc = 0.01915 (Interval: [0.01891, 0.01938]) != Reported 0.002"
+          },
+          "pedagogical_prompt": {
+            "question": "Mengapa nilai p yang dilaporkan tidak konsisten dengan nilai t-hitung?",
+            "options": [
+              {
+                "id": "A",
+                "text": "Berdasarkan fungsi distribusi t pada df=58, t=2.41 menghasilkan p = 0.01915, berbeda dari nilai lapor 0.002.",
+                "is_correct": true
+              },
+              {
+                "id": "B",
+                "text": "Derajat bebas (df) seharusnya dihitung sebagai N + 2.",
+                "is_correct": false
+              }
+            ],
+            "safe_revised_sentence": "Hasil uji hipotesis menunjukkan nilai t(58) = 2.41 dengan nilai p sebesar 0.01915 (p < 0,05)."
+          }
+        }
+      ],
+      "tables": [
+        {
+          "table_id": "Tabel_1_1",
+          "page": 1,
+          "bbox": [
+            28.4,
+            187.1,
+            538.6,
+            249.4
+          ],
+          "num_rows": 2,
+          "num_cols": 5,
+          "header_paths": [
+            "Kelompok",
+            "N",
+            "Rata-rata Pretest Rata-rata Posttest",
+            "Rata-rata Pretest Rata-rata Posttest",
+            "Uji-t (df=58)"
+          ],
+          "rows": [
+            [
+              {
+                "row": 1,
+                "col": 1,
+                "header_path": "Kelompok",
+                "row_label": "Kelompok Kontrol",
+                "raw_val": "Kelompok Kontrol",
+                "num_val": null,
+                "decimals": 0,
+                "bbox": [
+                  31.2,
+                  215.3,
+                  102.2,
+                  224.3
+                ]
+              },
+              {
+                "row": 1,
+                "col": 2,
+                "header_path": "N",
+                "row_label": "Kelompok Kontrol",
+                "raw_val": "30",
+                "num_val": 30.0,
+                "decimals": 0,
+                "bbox": [
+                  186.3,
+                  215.3,
+                  196.3,
+                  224.3
+                ]
+              },
+              {
+                "row": 1,
+                "col": 3,
+                "header_path": "Rata-rata Pretest Rata-rata Posttest",
+                "row_label": "Kelompok Kontrol",
+                "raw_val": "65,40",
+                "num_val": 65.4,
+                "decimals": 2,
+                "bbox": [
+                  265.1,
+                  215.3,
+                  287.6,
+                  224.3
+                ]
+              },
+              {
+                "row": 1,
+                "col": 4,
+                "header_path": "Rata-rata Pretest Rata-rata Posttest",
+                "row_label": "Kelompok Kontrol",
+                "raw_val": "68,20",
+                "num_val": 68.2,
+                "decimals": 2,
+                "bbox": [
+                  364.3,
+                  215.3,
+                  386.8,
+                  224.3
+                ]
+              },
+              {
+                "row": 1,
+                "col": 5,
+                "header_path": "Uji-t (df=58)",
+                "row_label": "Kelompok Kontrol",
+                "raw_val": "t = 1,12 (p = 0,267)",
+                "num_val": 1.12,
+                "decimals": 2,
+                "bbox": [
+                  443.6,
+                  215.3,
+                  520.2,
+                  224.3
+                ]
+              }
+            ],
+            [
+              {
+                "row": 2,
+                "col": 1,
+                "header_path": "Kelompok",
+                "row_label": "Kelompok Eksperimen",
+                "raw_val": "Kelompok Eksperimen",
+                "num_val": null,
+                "decimals": 0,
+                "bbox": [
+                  31.2,
+                  235.1,
+                  121.2,
+                  244.1
+                ]
+              },
+              {
+                "row": 2,
+                "col": 2,
+                "header_path": "N",
+                "row_label": "Kelompok Eksperimen",
+                "raw_val": "30",
+                "num_val": 30.0,
+                "decimals": 0,
+                "bbox": [
+                  186.3,
+                  235.1,
+                  196.3,
+                  244.1
+                ]
+              },
+              {
+                "row": 2,
+                "col": 3,
+                "header_path": "Rata-rata Pretest Rata-rata Posttest",
+                "row_label": "Kelompok Eksperimen",
+                "raw_val": "64,80",
+                "num_val": 64.8,
+                "decimals": 2,
+                "bbox": [
+                  265.1,
+                  235.1,
+                  287.6,
+                  244.1
+                ]
+              },
+              {
+                "row": 2,
+                "col": 4,
+                "header_path": "Rata-rata Pretest Rata-rata Posttest",
+                "row_label": "Kelompok Eksperimen",
+                "raw_val": "78,50",
+                "num_val": 78.5,
+                "decimals": 2,
+                "bbox": [
+                  364.3,
+                  235.1,
+                  386.8,
+                  244.1
+                ]
+              },
+              {
+                "row": 2,
+                "col": 5,
+                "header_path": "Uji-t (df=58)",
+                "row_label": "Kelompok Eksperimen",
+                "raw_val": "t = 2,41 (p = 0,002)",
+                "num_val": 2.41,
+                "decimals": 2,
+                "bbox": [
+                  443.6,
+                  235.1,
+                  520.2,
+                  244.1
+                ]
+              }
+            ]
+          ]
+        }
+      ],
+      "page_images": {
+        "1": "/static/pages/preset_3/page_1.png"
+      },
+      "page_dimensions": {
+        "1": [
+          595.28,
+          841.89
+        ]
+      }
+    }
+  }
+]

@@ -1,0 +1,1720 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>LOCUS · Academic Thesis Audit</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="/app/styles.css">
+<style>
+  /* Forensic Engine Modal Styles - 100% Offline Local CSS */
+  .font-mono-data {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  .modal-overlay,
+  #modalOverlay {
+    position: fixed;
+    inset: 0;
+    top: 0; right: 0; bottom: 0; left: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(15, 23, 42, 0.55);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    padding: 16px;
+    box-sizing: border-box;
+    transition: opacity 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .modal-card,
+  #modalContainer {
+    width: 100%;
+    max-width: 550px;
+    background: #ffffff;
+    border-radius: 18px;
+    border: 1px solid rgba(226, 232, 240, 0.9);
+    box-shadow: 0 24px 64px -12px rgba(15, 23, 42, 0.22), 0 2px 8px rgba(0, 0, 0, 0.04);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-sizing: border-box;
+    max-height: 92vh;
+    padding: 0;
+  }
+  .modal-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 20px 24px 16px 24px;
+    border-bottom: 1px solid #f1f5f9;
+    background: #ffffff;
+    box-sizing: border-box;
+  }
+  .modal-head-left {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .modal-icon-badge {
+    width: 42px;
+    height: 42px;
+    min-width: 42px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #eff6ff 0%, #e0e7ff 100%);
+    border: 1px solid #c7d2fe;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #2563eb;
+    box-shadow: 0 2px 5px rgba(37, 99, 235, 0.08);
+  }
+  .modal-title-wrap h2,
+  #modalTitle {
+    font-size: 16px;
+    font-weight: 600;
+    color: #0f172a;
+    letter-spacing: -0.015em;
+    line-height: 1.3;
+    margin: 0;
+  }
+  .modal-meta-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+    font-size: 12px;
+    color: #64748b;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+  .badge-offline-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: #f0fdf4;
+    color: #166534;
+    border: 1px solid #bbf7d0;
+    padding: 1px 7px;
+    border-radius: 9999px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .badge-offline-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: #22c55e;
+    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2);
+  }
+  .btn-modal-close,
+  #btnCloseModal {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+    background: #ffffff;
+    color: #64748b;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 150ms ease;
+    padding: 0;
+  }
+  .btn-modal-close:hover,
+  #btnCloseModal:hover {
+    background: #f1f5f9;
+    color: #0f172a;
+    border-color: #cbd5e1;
+  }
+  .modal-progress-section {
+    padding: 16px 24px 14px 24px;
+    background: #fafbfc;
+    border-bottom: 1px solid #f1f5f9;
+    box-sizing: border-box;
+  }
+  .progress-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .progress-stage-title,
+  #activeStageLabel {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: #1e293b;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    letter-spacing: -0.01em;
+  }
+  .progress-pct-badge,
+  #progressPercent {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #2563eb;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    padding: 2px 9px;
+    border-radius: 9999px;
+  }
+  .progress-bar-track,
+  #progressBarEl {
+    width: 100%;
+    height: 6px;
+    background: #e2e8f0;
+    border-radius: 9999px;
+    overflow: hidden;
+    position: relative;
+  }
+  .progress-bar-fill,
+  #progressBarFill {
+    height: 100%;
+    background: linear-gradient(90deg, #2563eb 0%, #3b82f6 50%, #60a5fa 100%);
+    border-radius: 9999px;
+    transition: width 350ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  #longWaitBanner {
+    margin-top: 12px;
+    margin-bottom: 2px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background-color: #fffbeb;
+    border: 1px solid #fde68a;
+    color: #92400e;
+    font-size: 12px;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    box-sizing: border-box;
+  }
+  .modal-timeline-wrap {
+    padding: 14px 24px 18px 24px;
+    max-height: 380px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+    flex: 1;
+    box-sizing: border-box;
+  }
+  .timeline-items,
+  #timelineList {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    position: relative;
+  }
+  .timeline-row,
+  .step-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    transition: all 180ms ease;
+    position: relative;
+    box-sizing: border-box;
+    width: 100%;
+  }
+  .timeline-row.active,
+  .step-item.active {
+    background: #f0f7ff;
+    border: 1px solid #dbeafe;
+  }
+  .timeline-indicator-col {
+    width: 22px;
+    min-width: 22px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    z-index: 2;
+    margin-top: 1px;
+    box-sizing: border-box;
+  }
+  .timeline-line-connector {
+    position: absolute;
+    top: 24px;
+    bottom: -16px;
+    width: 2px;
+    background: #e2e8f0;
+    z-index: 1;
+  }
+  .timeline-row:last-child .timeline-line-connector,
+  .step-item:last-child .timeline-line-connector {
+    display: none;
+  }
+  .timeline-icon-box {
+    width: 22px;
+    height: 22px;
+    min-width: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #ffffff;
+    z-index: 2;
+    box-sizing: border-box;
+  }
+  .timeline-row.pending .timeline-icon-box,
+  .step-item.pending .timeline-icon-box {
+    border: 2px solid #cbd5e1;
+    background: #ffffff;
+  }
+  .timeline-row.active .timeline-icon-box,
+  .step-item.active .timeline-icon-box {
+    border: none;
+    background: transparent;
+  }
+  .locus-spinner {
+    width: 20px;
+    height: 20px;
+    border: 2.5px solid rgba(37, 99, 235, 0.2);
+    border-top-color: #2563eb;
+    border-radius: 50%;
+    animation: locusSpin 0.75s linear infinite;
+    box-sizing: border-box;
+  }
+  @keyframes locusSpin {
+    to { transform: rotate(360deg); }
+  }
+  .timeline-row.completed .timeline-icon-box,
+  .step-item.completed .timeline-icon-box {
+    background: #10b981;
+    color: #ffffff;
+    box-shadow: 0 1px 3px rgba(16, 185, 129, 0.3);
+    border: none;
+  }
+  .timeline-content-col {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    box-sizing: border-box;
+  }
+  .timeline-text-wrap {
+    flex: 1;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+  .timeline-title {
+    font-size: 13.5px;
+    font-weight: 500;
+    line-height: 1.35;
+    color: #64748b;
+    margin: 0;
+  }
+  .timeline-row.active .timeline-title,
+  .step-item.active .timeline-title {
+    font-weight: 600;
+    color: #0f172a;
+  }
+  .timeline-row.completed .timeline-title,
+  .step-item.completed .timeline-title {
+    font-weight: 500;
+    color: #334155;
+  }
+  .timeline-desc {
+    font-size: 12px;
+    color: #64748b;
+    line-height: 1.4;
+    margin-top: 2px;
+  }
+  .timeline-row.pending .timeline-desc,
+  .step-item.pending .timeline-desc {
+    display: none;
+  }
+  .timeline-time-badge {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    color: #64748b;
+    background: #f1f5f9;
+    padding: 1px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  #completedBanner {
+    margin: 4px 24px 10px 24px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  #errorBanner {
+    margin: 4px 24px 10px 24px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .modal-foot,
+  #defaultFooter {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 24px;
+    background: #ffffff;
+    border-top: 1px solid #f1f5f9;
+    box-sizing: border-box;
+  }
+  .modal-telemetry-text {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11.5px;
+    color: #64748b;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .btn-cancel-audit,
+  #btnCancelAudit {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    color: #475569;
+    font-size: 12.5px;
+    font-weight: 500;
+    padding: 6px 14px;
+    border-radius: 7px;
+    cursor: pointer;
+    transition: all 120ms ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  }
+  .btn-cancel-audit:hover,
+  #btnCancelAudit:hover {
+    background: #fef2f2;
+    color: #ef4444;
+    border-color: #fecaca;
+  }
+  .hidden { display: none !important; }
+  .fixed { position: fixed; }
+  .absolute { position: absolute; }
+  .relative { position: relative; }
+  .inset-0 { top: 0; right: 0; bottom: 0; left: 0; }
+  .z-50 { z-index: 50; }
+  .flex { display: flex; }
+  .flex-col { flex-direction: column; }
+  .items-center { align-items: center; }
+  .items-start { align-items: flex-start; }
+  .justify-center { justify-content: center; }
+  .justify-between { justify-content: space-between; }
+  .w-full { width: 100%; }
+  .h-full { height: 100%; }
+  .w-5 { width: 1.25rem; }
+  .h-5 { height: 1.25rem; }
+  .w-4 { width: 1rem; }
+  .h-4 { height: 1rem; }
+  .w-7 { width: 1.75rem; }
+  .h-7 { height: 1.75rem; }
+  .w-2 { width: 0.5rem; }
+  .h-2 { height: 0.5rem; }
+  .bg-white { background-color: #ffffff; }
+  .rounded-full { border-radius: 9999px; }
+  .rounded-lg { border-radius: 0.5rem; }
+  .rounded-md { border-radius: 0.375rem; }
+  .overflow-hidden { overflow: hidden; }
+  .overflow-y-auto { overflow-y: auto; }
+  .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .flex-1 { flex: 1 1 0%; }
+  .flex-shrink-0 { flex-shrink: 0; }
+  .gap-2 { gap: 0.5rem; }
+  .gap-2\.5 { gap: 0.625rem; }
+  .gap-3 { gap: 0.75rem; }
+  .leading-snug { line-height: 1.375; }
+  .leading-relaxed { line-height: 1.625; }
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  .spinner-ring {
+    border: 2px solid rgba(0, 117, 222, 0.2);
+    border-top-color: #0075de;
+    border-radius: 50%;
+    animation: spin 0.85s linear infinite;
+  }
+  @keyframes checkPop {
+    0% { transform: scale(0.75); opacity: 0; }
+    70% { transform: scale(1.1); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+  .animate-check-pop {
+    animation: checkPop 180ms ease-out forwards;
+  }
+  .step-item {
+    transition: background-color 220ms ease, padding 200ms ease, margin 200ms ease;
+  }
+  .step-desc {
+    transition: max-height 240ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease, margin 200ms ease;
+  }
+  :root {
+    --canvas: #f6f5f4;
+    --surface: #ffffff;
+    --border: rgba(0, 0, 0, 0.08);
+    --border-strong: rgba(0, 0, 0, 0.16);
+    --ink: #1f1d1a;
+    --ink-2: #5f5b55;
+    --ink-3: #8a857d;
+    --accent: #2F4FD8;
+    --accent-tint: #eef2ff;
+    --error: #E11D48;
+    --error-tint: rgba(225, 29, 72, 0.12);
+    --evidence: #F59E0B;
+    --evidence-tint: #fef3c7;
+    --pass: #10B981;
+    --pass-tint: #ecfdf5;
+    --focus-ring: 0 0 0 2px #fff, 0 0 0 4px var(--accent);
+  }
+
+  *, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    background: var(--canvas);
+    color: var(--ink);
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 13px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+    height: 100vh;
+  }
+
+  .mono {
+    font-family: 'JetBrains Mono', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Top Bar */
+  header.top-bar {
+    height: 48px;
+    background: #ffffff;
+    border-bottom: 1px solid #E7E5E4;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    position: sticky;
+    top: 0;
+    z-index: 50;
+  }
+
+  .brand-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .wordmark {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    color: #1C1917;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .bar-divider {
+    width: 1px;
+    height: 16px;
+    background: #E7E5E4;
+  }
+
+  .doc-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #57534E;
+    font-size: 12px;
+    max-width: 220px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .controls-center {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .seg-control {
+    display: inline-flex;
+    align-items: center;
+    background: #ffffff;
+    border: 1px solid #E7E5E4;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .seg-btn {
+    border: none;
+    background: transparent;
+    padding: 5px 9px;
+    font-size: 12px;
+    color: #57534E;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 120ms ease-out, color 120ms ease-out;
+  }
+  .seg-btn:hover {
+    background: #FAFAF9;
+    color: #1C1917;
+  }
+  .seg-btn.active {
+    background: #EEF2FF;
+    color: #2F4FD8;
+    font-weight: 600;
+  }
+  .seg-btn + .seg-btn {
+    border-left: 1px solid #E7E5E4;
+  }
+  .seg-btn:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
+
+  .page-nav-text {
+    padding: 5px 10px;
+    font-size: 12px;
+    color: #1C1917;
+    min-width: 68px;
+    text-align: center;
+  }
+
+  .btn-top-export {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #ffffff;
+    color: #1C1917;
+    border: 1px solid #E7E5E4;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 120ms ease-out, border-color 120ms ease-out;
+  }
+  .btn-top-export:hover {
+    background: #F5F5F4;
+    border-color: #D6D3D1;
+  }
+  .btn-top-export:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  /* Workspace Layout */
+  .workspace {
+    display: grid;
+    grid-template-columns: 55fr 45fr;
+    height: calc(100vh - 48px);
+    width: 100vw;
+  }
+
+  .left-pane {
+    background: var(--canvas);
+    overflow-y: auto;
+    overflow-x: auto;
+    padding: 24px 20px 64px 20px;
+    border-right: 1px solid #E7E5E4;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .right-pane {
+    background: #FAFAF9;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* PDF Viewport Content */
+  .pdf-viewport {
+    position: relative;
+    transform-origin: top center;
+    transition: transform 120ms ease-out;
+  }
+
+  .pdf-page-container {
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.06), 0 12px 32px rgba(0,0,0,0.10);
+    border-radius: 2px;
+  }
+
+  .pdf-sheet {
+    display: block;
+    width: auto;
+    max-width: 640px;
+    height: auto;
+    user-select: none;
+  }
+
+  /* Bounding Box Precision X-Ray Layers */
+  .xray-bounding-box-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+
+  .xray-bbox {
+    position: absolute;
+    pointer-events: auto;
+    cursor: pointer;
+    border-radius: 3px;
+    transition: all 120ms ease;
+    z-index: 10;
+  }
+
+  /* Claim Wrapper is strictly an invisible positioning container (Zero giant boxes) */
+  .xray-claim-wrapper {
+    position: absolute;
+    pointer-events: none;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    z-index: 10;
+  }
+
+  /* Table Evidence Cell Highlight (Zero obstruction, crisp 100% visible numbers) */
+  .xray-bbox-evidence {
+    background-color: rgba(47, 79, 216, 0.08);
+    border: 2px solid var(--accent);
+    border-radius: 2px;
+    box-shadow: none !important;
+  }
+
+  .xray-bbox-evidence.active {
+    background-color: rgba(47, 79, 216, 0.12);
+    border: 2px solid var(--accent);
+    box-shadow: none !important;
+    z-index: 25;
+  }
+
+  /* Text-Only Line Segment Highlights (Follows exact sentence lines cleanly) */
+  .xray-line-segment {
+    position: absolute;
+    pointer-events: auto;
+    cursor: pointer;
+    background-color: rgba(225, 29, 72, 0.08);
+    border-bottom: 2px solid rgba(225, 29, 72, 0.45);
+    border-radius: 2px;
+    transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+    z-index: 15;
+  }
+  .xray-line-segment:hover {
+    background-color: rgba(225, 29, 72, 0.16);
+    border-bottom-color: var(--error);
+  }
+  .xray-line-segment.active {
+    background-color: rgba(225, 29, 72, 0.20);
+    border: 1px solid rgba(225, 29, 72, 0.75);
+    border-bottom: 2.5px solid var(--error);
+    border-radius: 2px;
+    box-shadow: 0 1px 3px rgba(225, 29, 72, 0.2);
+    z-index: 20;
+  }
+
+  /* Gutter Pill: Placed strictly inside EMPTY MARGINS (Zero text obstruction, 100% inside white sheet) */
+  .claim-gutter-tag-left {
+    position: absolute;
+    right: calc(100% + 10px);
+    top: 1px;
+    z-index: 30;
+    pointer-events: auto;
+    white-space: nowrap;
+  }
+
+  .claim-gutter-tag-right {
+    position: absolute;
+    left: calc(100% + 10px);
+    top: 1px;
+    z-index: 30;
+    pointer-events: auto;
+    white-space: nowrap;
+  }
+
+  .claim-gutter-tag-inline {
+    position: absolute;
+    right: 0;
+    top: -24px;
+    z-index: 30;
+    pointer-events: auto;
+    white-space: nowrap;
+  }
+
+  .floating-claim-tag {
+    background: #ffffff;
+    border: 1px solid #E7E5E4;
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-family: 'Inter', sans-serif;
+    font-size: 11px;
+    font-weight: 500;
+    color: #1C1917;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    text-decoration: none;
+    transition: all 120ms ease-out;
+    user-select: none;
+    outline: none;
+    white-space: nowrap;
+  }
+  .floating-claim-tag:hover {
+    border-color: #2F4FD8;
+    color: #2F4FD8;
+    box-shadow: 0 2px 6px rgba(47, 79, 216, 0.15);
+  }
+
+  /* Floating Navigation Bar (Docked at bottom of viewer, 100% zero data obstruction) */
+  .cross-page-nav-bar {
+    position: sticky;
+    bottom: 24px;
+    z-index: 90;
+    pointer-events: auto;
+    margin: auto auto 12px auto;
+    animation: fadeInSlideUp 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes fadeInSlideUp {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .nav-bar-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: 9999px;
+    padding: 6px 14px 6px 16px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12), 0 1px 4px rgba(0, 0, 0, 0.06);
+    font-family: var(--font-sans);
+    font-size: 12.5px;
+    color: var(--ink);
+    white-space: nowrap;
+  }
+
+  .nav-bar-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .nav-bar-status-dot.amber { background-color: #F59E0B; }
+  .nav-bar-status-dot.blue { background-color: #2F4FD8; }
+  .nav-bar-status-dot.red { background-color: #E11D48; }
+
+  .nav-bar-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--accent);
+    color: #ffffff;
+    border: none;
+    border-radius: 9999px;
+    padding: 5px 12px;
+    font-size: 11.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 120ms ease, transform 100ms ease;
+    font-family: var(--font-sans);
+  }
+  .nav-bar-btn:hover {
+    background: #243fb3;
+    transform: translateY(-1px);
+  }
+  .nav-bar-btn:active {
+    transform: translateY(0);
+  }
+
+  /* Margin Bracket Layer */
+  .margin-bracket-svg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 20;
+  }
+
+  /* Flash Highlight Animation on Cell */
+  @keyframes flashAccent {
+    0% { background-color: rgba(47, 79, 216, 0.45); }
+    100% { background-color: rgba(47, 79, 216, 0.14); }
+  }
+  .flash-highlight {
+    animation: flashAccent 1.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* RIGHT PANE: Mature B2B Style */
+  .inspector-header-container {
+    background: #ffffff;
+    border-bottom: 1px solid #E7E5E4;
+    position: sticky;
+    top: 0;
+    z-index: 40;
+  }
+
+  .inspector-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px 10px 20px;
+  }
+
+  .inspector-title-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .inspector-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #1C1917;
+    letter-spacing: -0.01em;
+  }
+
+  .inspector-badge-count {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    background: #F5F5F4;
+    color: #57534E;
+    padding: 2px 7px;
+    border-radius: 999px;
+    border: 1px solid #E7E5E4;
+  }
+
+  /* Segmented Underline Tabs */
+  .inspector-tabs {
+    display: flex;
+    padding: 0 20px;
+    gap: 20px;
+    border-top: 1px solid #F5F5F4;
+  }
+
+  .tab-item {
+    background: none;
+    border: none;
+    padding: 10px 0;
+    font-size: 12px;
+    font-weight: 500;
+    color: #78716C;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    position: relative;
+    transition: color 120ms ease;
+  }
+  .tab-item:hover {
+    color: #1C1917;
+  }
+  .tab-item.active {
+    color: #1C1917;
+    font-weight: 600;
+  }
+  .tab-item.active::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: #2F4FD8;
+    border-radius: 1px;
+  }
+  .tab-item .tab-count {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #A8A29E;
+  }
+  .tab-item.active .tab-count {
+    color: #2F4FD8;
+  }
+
+  /* Findings List Container */
+  .cards-container {
+    padding: 16px 20px 48px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  /* Base Finding Card */
+  .b2b-card {
+    background: #ffffff;
+    border: 1px solid #E7E5E4;
+    border-radius: 8px;
+    overflow: hidden;
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+  }
+  .b2b-card:hover {
+    border-color: #D6D3D1;
+  }
+  .b2b-card.selected {
+    border-color: #2F4FD8;
+    box-shadow: 0 0 0 1px #2F4FD8;
+  }
+
+  /* 6px Semantic Dots */
+  .severity-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .severity-dot.red { background-color: #E11D48; }
+  .severity-dot.amber { background-color: #F59E0B; }
+  .severity-dot.green { background-color: #10B981; }
+
+  /* Card Item Header */
+  .card-summary {
+    padding: 12px 14px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    user-select: none;
+  }
+
+  .card-line-1 {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .card-line-1-left {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .card-title-text {
+    font-size: 13px;
+    font-weight: 500;
+    color: #1C1917;
+  }
+
+  .card-page-label {
+    font-size: 12px;
+    color: #78716C;
+    white-space: nowrap;
+    margin-left: 8px;
+  }
+
+  .card-line-2 {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #78716C;
+    padding-left: 13px;
+  }
+
+  .card-id-code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #A8A29E;
+  }
+
+  .card-line-3 {
+    padding-left: 13px;
+    font-size: 12px;
+    margin-top: 2px;
+    color: #57534E;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .diff-inline-del {
+    color: #E11D48;
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+  }
+  .diff-inline-arrow {
+    color: #A8A29E;
+  }
+  .diff-inline-ins {
+    color: #1C1917;
+    font-weight: 500;
+  }
+
+  /* Expanded Card Body */
+  .card-expanded-body {
+    padding: 0 14px 14px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .diff-grid {
+    display: grid;
+    grid-template-columns: 1fr 1px 1fr;
+    align-items: stretch;
+    background: #FAFAF9;
+    border: 1px solid #E7E5E4;
+    border-radius: 6px;
+    padding: 10px 14px;
+    gap: 12px;
+  }
+
+  .diff-grid-col {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .diff-grid-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: #78716C;
+  }
+
+  .diff-grid-val-row {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+
+  .diff-grid-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 24px;
+    font-weight: 600;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+  .diff-grid-num.text-err { color: #E11D48; }
+  .diff-grid-num.text-target { color: #1C1917; }
+
+  .diff-grid-sub {
+    font-size: 12px;
+    color: #57534E;
+    font-family: 'Inter', sans-serif;
+  }
+  .diff-grid-sub strong {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    color: #1C1917;
+  }
+
+  .diff-divider {
+    background: #E7E5E4;
+    width: 1px;
+  }
+
+  .diff-explanation {
+    font-size: 13px;
+    line-height: 1.5;
+    color: #57534E;
+  }
+
+  .quote-clean {
+    border-left: 2px solid #D6D3D1;
+    padding-left: 10px;
+    font-size: 12.5px;
+    color: #57534E;
+    font-style: italic;
+    line-height: 1.45;
+  }
+  .quote-clean .num-underline {
+    font-style: normal;
+    font-family: 'JetBrains Mono', monospace;
+    text-decoration: underline;
+    text-decoration-color: #E11D48;
+    text-underline-offset: 3px;
+    color: #1C1917;
+  }
+
+  /* Table Snippet */
+  .table-snippet-container {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .table-snippet-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #78716C;
+  }
+
+  .table-jump-link {
+    background: none;
+    border: none;
+    color: #2F4FD8;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .table-jump-link:hover {
+    text-decoration: underline;
+  }
+
+  .snippet-table-clean {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+  }
+  .snippet-table-clean th {
+    text-align: right;
+    font-weight: 500;
+    color: #78716C;
+    padding: 5px 6px;
+    border-bottom: 1px solid #E7E5E4;
+  }
+  .snippet-table-clean th:first-child { text-align: left; }
+  .snippet-table-clean td {
+    padding: 6px 6px;
+    text-align: right;
+    font-family: 'JetBrains Mono', monospace;
+    color: #57534E;
+    border-bottom: 1px solid #F5F5F4;
+  }
+  .snippet-table-clean td:first-child {
+    text-align: left;
+    font-family: 'Inter', sans-serif;
+    color: #1C1917;
+  }
+  .snippet-target-cell {
+    outline: 1.5px solid #2F4FD8;
+    outline-offset: -1px;
+    border-radius: 2px;
+    color: #1C1917 !important;
+    font-weight: 600;
+  }
+
+  /* Recalculation Block */
+  .recalc-clean {
+    background: #F5F5F4;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: #57534E;
+  }
+  .recalc-match-comment {
+    color: #78716C;
+    font-weight: 400;
+  }
+
+  /* Card Action Footer */
+  .card-footer-actions {
+    border-top: 1px solid #F5F5F4;
+    padding-top: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .card-footer-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn-action-primary {
+    background: #2F4FD8;
+    color: #ffffff;
+    border: none;
+    border-radius: 5px;
+    padding: 5px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 120ms ease;
+  }
+  .btn-action-primary:hover {
+    opacity: 0.92;
+  }
+
+  .btn-action-ghost {
+    background: transparent;
+    border: none;
+    color: #78716C;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 5px 8px;
+    border-radius: 5px;
+    transition: background 120ms ease, color 120ms ease;
+  }
+  .btn-action-ghost:hover {
+    background: #F5F5F4;
+    color: #1C1917;
+  }
+
+  .btn-copy-evidence {
+    background: transparent;
+    border: 1px solid #E7E5E4;
+    border-radius: 5px;
+    padding: 5px 8px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #57534E;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  .btn-copy-evidence:hover {
+    background: #F5F5F4;
+    border-color: #D6D3D1;
+    color: #1C1917;
+  }
+
+  /* Scrollbars */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.12);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.2);
+  }
+
+  @media (max-width: 1100px) {
+    .workspace {
+      grid-template-columns: 1fr;
+      height: auto;
+    }
+    .left-pane {
+      height: 600px;
+      border-right: none;
+      border-bottom: 1px solid #E7E5E4;
+    }
+    .right-pane {
+      height: auto;
+    }
+  }
+</style>
+</head>
+<body>
+<!-- Top Bar -->
+<header class="top-bar">
+<div class="brand-group">
+  <a href="/app/index.html" class="wordmark" title="Kembali ke Beranda">LOCUS</a>
+  <div class="bar-divider"></div>
+  <a href="/app/index.html" class="seg-btn" style="text-decoration:none; gap: 4px; border-radius: 4px; border: 1px solid #E7E5E4; padding: 4px 8px;">
+    <svg fill="none" height="13" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24" width="13">
+      <polyline points="15 18 9 12 15 6"></polyline>
+    </svg>
+    <span>Beranda</span>
+  </a>
+  <div class="bar-divider"></div>
+  <div class="doc-chip" id="docChip" title="Nama Dokumen">
+    <svg fill="none" height="15" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" viewBox="0 0 24 24" width="15">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+      <polyline points="14 2 14 8 20 8"></polyline>
+      <line x1="16" x2="8" y1="13" y2="13"></line>
+      <line x1="16" x2="8" y1="17" y2="17"></line>
+    </svg>
+    <span id="docTitleDisplay">BAB 4.pdf</span>
+  </div>
+</div>
+<div class="controls-center">
+  <!-- Page Navigation -->
+  <div class="seg-control">
+    <button aria-label="Halaman Sebelumnya" class="seg-btn" id="btnPrevPage">
+      <svg fill="none" height="15" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" viewBox="0 0 24 24" width="15">
+        <polyline points="15 18 9 12 15 6"></polyline>
+      </svg>
+    </button>
+    <span class="page-nav-text mono" id="pageDisplay">3 / 23</span>
+    <button aria-label="Halaman Berikutnya" class="seg-btn" id="btnNextPage">
+      <svg fill="none" height="15" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" viewBox="0 0 24 24" width="15">
+        <polyline points="9 18 15 12 9 6"></polyline>
+      </svg>
+    </button>
+  </div>
+  <!-- Zoom Group -->
+  <div class="seg-control">
+    <button aria-label="Perkecil" class="seg-btn" id="btnZoomOut">
+      <svg fill="none" height="15" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" viewBox="0 0 24 24" width="15">
+        <line x1="5" x2="19" y1="12" y2="12"></line>
+      </svg>
+    </button>
+    <span class="page-nav-text mono" id="zoomLevelDisplay">100%</span>
+    <button aria-label="Perbesar" class="seg-btn" id="btnZoomIn">
+      <svg fill="none" height="15" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" viewBox="0 0 24 24" width="15">
+        <line x1="12" x2="12" y1="5" y2="19"></line>
+        <line x1="5" x2="19" y1="12" y2="12"></line>
+      </svg>
+    </button>
+    <button class="seg-btn" id="btnZoomFit">Fit</button>
+  </div>
+</div>
+<div style="display: flex; align-items: center; gap: 8px;">
+  <span class="version-badge" id="engineVersionBadge" style="font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 4px 9px; border-radius: 9999px; background: rgba(0, 117, 222, 0.08); color: #0075de; font-weight: 600; border: 1px solid rgba(0, 117, 222, 0.25); display: inline-flex; align-items: center; gap: 5px;">
+    <span style="width: 6px; height: 6px; border-radius: 50%; background: #10b981;"></span>
+    LOCUS Engine v3.5-grounded
+  </span>
+  <input type="file" id="pdf-file-input" accept=".pdf" style="display: none;">
+  <button class="btn-top-export" onclick="triggerStudioPdfUpload()" title="Unggah PDF Baru">
+    <svg fill="none" height="14" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" viewBox="0 0 24 24" width="14">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+      <polyline points="17 8 12 3 7 8"></polyline>
+      <line x1="12" y1="3" x2="12" y2="15"></line>
+    </svg>
+    <span>Unggah PDF</span>
+  </button>
+  <button class="btn-top-export" id="btnExportTop" onclick="exportAuditReceipt()">
+    <svg fill="none" height="14" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" viewBox="0 0 24 24" width="14">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+      <polyline points="7 10 12 15 17 10"></polyline>
+      <line x1="12" x2="12" y1="15" y2="3"></line>
+    </svg>
+    <span>Laporan Audit</span>
+  </button>
+</div>
+</header>
+
+<!-- Workspace Grid -->
+<main class="workspace">
+<!-- Left Pane: PDF Viewer with dynamic page rendering & precision bounding boxes -->
+<section class="left-pane" id="pdfContainer" title="Seret dan lepaskan file PDF ke sini untuk diaudit">
+  <div class="pdf-viewport" id="pdfViewport">
+    <div class="pdf-page-container" id="pageContainer">
+      <!-- Dynamic Rendered PDF Page Image -->
+      <img id="pdf-page-img" class="pdf-sheet" alt="Halaman Dokumen Ilmiah" style="display: none;">
+      
+      <!-- Bounding Box Precision Overlay -->
+      <div id="xray-bounding-box-overlay" class="xray-bounding-box-overlay"></div>
+      
+      <!-- Margin Bracket SVG across page -->
+      <svg class="margin-bracket-svg" id="marginBracketSvg" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arrowhead" markerHeight="6" markerWidth="6" orient="auto" refX="4" refY="3">
+            <polygon fill="#2F4FD8" fill-opacity="0.8" points="0 0, 5 3, 0 6"></polygon>
+          </marker>
+        </defs>
+        <path d="M 14 0 Q 14 0, 14 0" fill="none" id="bracketPath" marker-end="url(#arrowhead)" stroke="#2F4FD8" stroke-linecap="round" stroke-opacity="0.65" stroke-width="1.5"></path>
+      </svg>
+    </div>
+  </div>
+
+  <!-- Floating Cross-Page Context Bar (0% data obstruction, sticky at bottom of viewer) -->
+  <div id="crossPageBanner" class="cross-page-nav-bar" style="display: none;">
+    <div class="nav-bar-pill">
+      <span class="nav-bar-status-dot amber" id="navBarDot"></span>
+      <span class="nav-bar-text" id="navBarText">Memeriksa bukti tabel</span>
+      <button type="button" class="nav-bar-btn" id="navBarActionBtn">
+        <span id="navBarActionText">Aksi</span>
+      </button>
+    </div>
+  </div>
+</section>
+
+<!-- Right Pane: Dynamic B2B Findings Inspector -->
+<aside class="right-pane">
+  <div class="inspector-header-container">
+    <div class="inspector-title-row">
+      <div class="inspector-title-group">
+        <h2 class="inspector-title">Temuan</h2>
+        <span class="inspector-badge-count" id="inspectorTotalCount">0</span>
+      </div>
+      <div style="font-size: 11px; color: var(--ink-3);" class="mono">
+        100% Offline (Local SciPy)
+      </div>
+    </div>
+    <!-- Underline Filter Tabs -->
+    <nav aria-label="Filter Temuan" class="inspector-tabs">
+      <button class="tab-item active" data-filter="all" onclick="setStudioFilter('all')">
+        <span>Semua</span>
+        <span class="tab-count" id="tabCountAll">0</span>
+      </button>
+      <button class="tab-item" data-filter="fatal" onclick="setStudioFilter('fatal')">
+        <span>Fatal</span>
+        <span class="tab-count" id="tabCountFatal">0</span>
+      </button>
+      <button class="tab-item" data-filter="warning" onclick="setStudioFilter('warning')">
+        <span>Peringatan</span>
+        <span class="tab-count" id="tabCountWarning">0</span>
+      </button>
+      <button class="tab-item" data-filter="consistent" onclick="setStudioFilter('consistent')">
+        <span>Konsisten</span>
+        <span class="tab-count" id="tabCountConsistent">0</span>
+      </button>
+    </nav>
+  </div>
+  
+  <!-- Pattern Summary Banner -->
+  <div id="patternSummaryBanner" style="display: none; margin: 10px 14px 4px 14px; padding: 10px 12px; background: #fafaf9; border: 1px solid rgba(0,0,0,0.08); border-radius: 8px; font-size: 12px;"></div>
+
+  <!-- Dynamic Findings Cards Container -->
+  <div class="cards-container" id="cardsList">
+    <!-- Populated dynamically by studio.js -->
+  </div>
+</aside>
+</main>
+
+  <!-- ============================================== -->
+  <!-- LOCUS FORENSIC ENGINE - MODAL PROGRES AUDIT       -->
+  <!-- ============================================== -->
+  <div id="modalOverlay" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modalTitle" style="display: none;">
+    <!-- Modal Card (550px Desktop, Bottom Sheet on Mobile) -->
+    <div id="modalContainer" class="modal-card">
+      
+      <!-- 1. Header -->
+      <div class="modal-head">
+        <div class="modal-head-left">
+          <div class="modal-icon-badge" aria-hidden="true">
+            <svg style="width: 22px; height: 22px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6 18h8"></path>
+              <path d="M3 22h18"></path>
+              <path d="M14 22a7 7 0 1 0 0-14h-1"></path>
+              <path d="M9 14h2"></path>
+              <path d="M9 12a2 2 0 0 1-2-2V6h6v4a2 2 0 0 1-2 2Z"></path>
+              <path d="M12 6V3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3"></path>
+            </svg>
+          </div>
+          <div class="modal-title-wrap">
+            <h2 id="modalTitle">Mengaudit BAB 4.pdf</h2>
+            <div class="modal-meta-row">
+              <span id="modalSubtitle">367 KB</span>
+              <span>·</span>
+              <span class="badge-offline-pill">
+                <span class="badge-offline-dot"></span> 100% offline (Local CPU)
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Close / Dismiss Button -->
+        <button id="btnCloseModal" type="button" aria-label="Tutup jendela audit" class="btn-modal-close">
+          <svg style="width: 16px; height: 16px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <!-- 2. Progress Hero Section -->
+      <div class="modal-progress-section">
+        <div class="progress-header-row">
+          <span id="activeStageLabel" class="progress-stage-title" aria-live="polite">
+            Deteksi tabel
+          </span>
+          <span id="progressPercent" class="progress-pct-badge">
+            15%
+          </span>
+        </div>
+        
+        <!-- Track & Fill -->
+        <div class="progress-bar-track" role="progressbar" id="progressBarEl" aria-valuenow="15" aria-valuemin="0" aria-valuemax="100">
+          <div id="progressBarFill" class="progress-bar-fill" style="width: 15%;"></div>
+        </div>
+
+        <!-- Long Wait Warning Banner -->
+        <div id="longWaitBanner" class="hidden">
+          <svg style="width: 16px; height: 16px; margin-top: 2px; flex-shrink: 0; color: #b45309;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+          <span id="longWaitBannerText" style="line-height: 1.45;">Dokumen cukup panjang. Proses audit sedang berjalan di CPU lokal - mohon tunggu sebentar lagi.</span>
+        </div>
+      </div>
+
+      <!-- 3. Vertical Step Timeline -->
+      <div class="modal-timeline-wrap">
+        <div class="timeline-items" id="timelineList" role="list">
+          
+          <!-- STEP 1 -->
+          <div class="timeline-row pending" id="step-1" data-status="pending">
+            <div class="timeline-indicator-col">
+              <div class="timeline-icon-box"></div>
+              <div class="timeline-line-connector"></div>
+            </div>
+            <div class="timeline-content-col">
+              <div class="timeline-text-wrap">
+                <div class="timeline-title">Deteksi tabel</div>
+                <div class="timeline-desc">Geometri tabel 3-garis dan klaster kolom.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- STEP 2 -->
+          <div class="timeline-row pending" id="step-2" data-status="pending">
+            <div class="timeline-indicator-col">
+              <div class="timeline-icon-box"></div>
+              <div class="timeline-line-connector"></div>
+            </div>
+            <div class="timeline-content-col">
+              <div class="timeline-text-wrap">
+                <div class="timeline-title">Pemisahan klaim</div>
+                <div class="timeline-desc">Teks tabel dimasking agar tidak bocor ke narasi.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- STEP 3 -->
+          <div class="timeline-row pending" id="step-3" data-status="pending">
+            <div class="timeline-indicator-col">
+              <div class="timeline-icon-box"></div>
+              <div class="timeline-line-connector"></div>
+            </div>
+            <div class="timeline-content-col">
+              <div class="timeline-text-wrap">
+                <div class="timeline-title">Ekspansi variabel</div>
+                <div class="timeline-desc">Stem morfologi dan resolusi anafora Bab 3/4.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- STEP 4 -->
+          <div class="timeline-row pending" id="step-4" data-status="pending">
+            <div class="timeline-indicator-col">
+              <div class="timeline-icon-box"></div>
+              <div class="timeline-line-connector"></div>
+            </div>
+            <div class="timeline-content-col">
+              <div class="timeline-text-wrap">
+                <div class="timeline-title">Penautan semantik</div>
+                <div class="timeline-desc">Duet model ONNX INT8: bge-reranker-v2-m3 dan mDeBERTa-v3.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- STEP 5 -->
+          <div class="timeline-row pending" id="step-5" data-status="pending">
+            <div class="timeline-indicator-col">
+              <div class="timeline-icon-box"></div>
+              <div class="timeline-line-connector"></div>
+            </div>
+            <div class="timeline-content-col">
+              <div class="timeline-text-wrap">
+                <div class="timeline-title">Solver deterministik</div>
+                <div class="timeline-desc">8 solver matematika: statcheck, GRIM, FormulaEval.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- STEP 6 -->
+          <div class="timeline-row pending" id="step-6" data-status="pending">
+            <div class="timeline-indicator-col">
+              <div class="timeline-icon-box"></div>
+              <div class="timeline-line-connector"></div>
+            </div>
+            <div class="timeline-content-col">
+              <div class="timeline-text-wrap">
+                <div class="timeline-title">Sintesis bukti</div>
+                <div class="timeline-desc">Kurva Bezier, What-If stepper, tanda tangan SHA-256.</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- State: Completed Summary Banner -->
+      <div id="completedBanner" class="hidden">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="width: 8px; height: 8px; border-radius: 50%; background: #10b981;"></span>
+          <span style="font-size: 13px; font-weight: 600; color: #166534;" id="completedSummaryText">Audit terverifikasi</span>
+          <span style="font-size: 12px; font-family: monospace; color: #15803d;" id="completedElapsedTime">(1,41 dtk)</span>
+        </div>
+        <button id="btnViewResults" type="button" style="padding: 6px 14px; background: #16a34a; color: #ffffff; font-size: 12.5px; font-weight: 500; border-radius: 7px; border: none; cursor: pointer;">
+          Lihat hasil
+        </button>
+      </div>
+
+      <!-- State: Error Banner -->
+      <div id="errorBanner" class="hidden">
+        <div style="display: flex; align-items: flex-start; gap: 10px;">
+          <div style="width: 20px; height: 20px; border-radius: 50%; background: #ef4444; color: #ffffff; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: bold; flex-shrink: 0;">!</div>
+          <div>
+            <div style="font-size: 13px; font-weight: 600; color: #991b1b;" id="errorBannerTitle">Gagal mengeksekusi audit</div>
+            <div style="font-size: 12px; color: #b91c1c; margin-top: 1px;" id="errorBannerDetail">Format naskah tidak terbaca atau server lokal terputus.</div>
+          </div>
+        </div>
+        <button id="btnRetryAudit" type="button" style="padding: 5px 12px; border: 1px solid #fca5a5; background: #ffffff; color: #991b1b; font-size: 12px; font-weight: 500; border-radius: 6px; cursor: pointer;">
+          Coba lagi
+        </button>
+      </div>
+
+      <!-- 4. Footer -->
+      <div id="defaultFooter" class="modal-foot">
+        <div class="modal-telemetry-text">
+          <svg style="width: 14px; height: 14px; color: #64748b;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="4" y="4" width="16" height="16" rx="2"></rect>
+            <rect x="9" y="9" width="6" height="6"></rect>
+            <line x1="9" y1="1" x2="9" y2="4"></line>
+            <line x1="15" y1="1" x2="15" y2="4"></line>
+            <line x1="9" y1="20" x2="9" y2="23"></line>
+            <line x1="15" y1="20" x2="15" y2="23"></line>
+            <line x1="20" y1="9" x2="23" y2="9"></line>
+            <line x1="20" y1="14" x2="23" y2="14"></line>
+            <line x1="1" y1="9" x2="4" y2="9"></line>
+            <line x1="1" y1="14" x2="4" y2="14"></line>
+          </svg>
+          <span>CPU Lokal</span>
+          <span>·</span>
+          <span>16 GB RAM</span>
+          <span>·</span>
+          <span>127.0.0.1</span>
+          <span>·</span>
+          <span id="elapsedTimer" style="font-weight: 600; color: #0f172a;">0,00 dtk</span>
+        </div>
+        <button id="btnCancelAudit" type="button" class="btn-cancel-audit">
+          Batalkan
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+<script src="/app/studio.js"></script>
+</body>
+</html>

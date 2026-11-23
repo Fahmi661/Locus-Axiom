@@ -1,0 +1,701 @@
+{
+  "timestamp": 1794833425.9078872,
+  "total_documents": 16,
+  "total_pages": 190,
+  "total_tables": 59,
+  "total_claims": 1242,
+  "total_findings": 6,
+  "total_time_ms": 26327.199999999993,
+  "results": [
+    {
+      "file_name": "DOC-1794825889_LOCUS_Penjelasan_Ide.pdf",
+      "size_kb": 91.396484375,
+      "pages": 7,
+      "tables_count": 4,
+      "claims_count": 9,
+      "summary": {
+        "total_claims_checked": 9,
+        "pass_count": 6,
+        "warn_rounding_count": 0,
+        "contradiction_or_flip_count": 0,
+        "skip_nei_count": 3
+      },
+      "findings_count": 0,
+      "findings": [],
+      "t_read_ms": 888.4,
+      "t_audit_ms": 34.0,
+      "t_total_ms": 922.5,
+      "status": "SUCCESS"
+    },
+    {
+      "file_name": "DOC-1794828086_BAB 4.pdf",
+      "size_kb": 367.0390625,
+      "pages": 23,
+      "tables_count": 10,
+      "claims_count": 161,
+      "summary": {
+        "total_claims_checked": 161,
+        "pass_count": 122,
+        "warn_rounding_count": 2,
+        "contradiction_or_flip_count": 1,
+        "skip_nei_count": 36
+      },
+      "findings_count": 3,
+      "findings": [
+        {
+          "finding_id": "F-C_3_16-TUPLE",
+          "verdict": "WARN_TRUNCATION_ROUNDING",
+          "severity": "MEDIUM",
+          "claim_source": {
+            "page": 3,
+            "text": "Selanjutnya adalah pengalaman auditor (PNGLM), variabel ini juga telah di transformasi dengan SQRT, yang menunjukkan tingkat tertinggi pada 3,46 dan terendah 1 dengan rata-rata 2,67.",
+            "bbox": [
+              131.4,
+              501.3,
+              527.0,
+              568.5
+            ]
+          },
+          "table_evidence": {
+            "table_id": "Tabel_2_1",
+            "page": 2,
+            "cells": [
+              {
+                "row": 4,
+                "col": 5,
+                "header_path": "Mean",
+                "row_label": "SQRTPGLMN",
+                "raw_val": "2.675933350693807",
+                "num_val": 2.675933350693807,
+                "decimals": 15,
+                "bbox": [
+                  403.9,
+                  576.1,
+                  489.5,
+                  588.1
+                ]
+              }
+            ]
+          },
+          "diff_details": {
+            "claimed_val": "2,67",
+            "table_val": "2.675933350693807",
+            "table_rounded": 2.68,
+            "diff": -0.01,
+            "row_label": "SQRTPGLMN",
+            "col_name": "Mean"
+          },
+          "math_and_logic_trace": {
+            "operation": "DIRECT_CELL_VALUE_VERIFICATION",
+            "metric_name": "SQRTPGLMN.Mean",
+            "reranker_confidence": 0.96,
+            "nli_label": "NEUTRAL",
+            "formula_display": "SQRTPGLMN (Mean): Sel = 2.67593 -> Pembulatan 2 desimal seharusnya = 2.68 (tertulis 2.67 akibat pemotongan tanpa pembulatan ke atas)"
+          },
+          "pedagogical_prompt": {
+            "question": "Mengapa pelaporan angka 2,67 pada baris SQRTPGLMN (Mean) perlu diperbaiki?",
+            "options": [
+              {
+                "id": "A",
+                "text": "Berdasarkan kaidah pembulatan baku, sel tabel bernilai 2.67593 dibulatkan menjadi 2.68, bukan 2,67.",
+                "is_correct": true
+              },
+              {
+                "id": "B",
+                "text": "Nilai harus diubah menjadi format persen.",
+                "is_correct": false
+              }
+            ],
+            "safe_revised_sentence": "Nilai Mean untuk SQRTPGLMN pada Tabel_2_1 adalah 2.68 (nilai eksak sel: 2.675933350693807)."
+          }
+        },
+        {
+          "finding_id": "F-C_3_17-TUPLE",
+          "verdict": "WARN_TRUNCATION_ROUNDING",
+          "severity": "MEDIUM",
+          "claim_source": {
+            "page": 3,
+            "text": "Yang terakhir adalah item spesialisasi auditor (SPES), variabel ini telah ditransform dengan SQRT yang memiliki nilai maksimum 1 dan minimum 0,23 dengan rata-rata 0,425 yang terhitung dari subsector perusahaan.",
+            "bbox": [
+              131.4,
+              584.1,
+              527.1,
+              651.3
+            ]
+          },
+          "table_evidence": {
+            "table_id": "Tabel_2_1",
+            "page": 2,
+            "cells": [
+              {
+                "row": 2,
+                "col": 3,
+                "header_path": "Minimum",
+                "row_label": "SQRTSPES",
+                "raw_val": ".236643191323985",
+                "num_val": 0.236643191323985,
+                "decimals": 15,
+                "bbox": [
+                  224.4,
+                  541.9,
+                  305.0,
+                  553.9
+                ]
+              }
+            ]
+          },
+          "diff_details": {
+            "claimed_val": "0,23",
+            "table_val": ".236643191323985",
+            "table_rounded": 0.24,
+            "diff": -0.01,
+            "row_label": "SQRTSPES",
+            "col_name": "Minimum"
+          },
+          "math_and_logic_trace": {
+            "operation": "DIRECT_CELL_VALUE_VERIFICATION",
+            "metric_name": "SQRTSPES.Minimum",
+            "reranker_confidence": 0.96,
+            "nli_label": "NEUTRAL",
+            "formula_display": "SQRTSPES (Minimum): Sel = 0.23664 -> Pembulatan 2 desimal seharusnya = 0.24 (tertulis 0.23 akibat pemotongan tanpa pembulatan ke atas)"
+          },
+          "pedagogical_prompt": {
+            "question": "Mengapa pelaporan angka 0,23 pada baris SQRTSPES (Minimum) perlu diperbaiki?",
+            "options": [
+              {
+                "id": "A",
+                "text": "Berdasarkan kaidah pembulatan baku, sel tabel bernilai 0.23664 dibulatkan menjadi 0.24, bukan 0,23.",
+                "is_correct": true
+              },
+              {
+                "id": "B",
+                "text": "Nilai harus diubah menjadi format persen.",
+                "is_correct": false
+              }
+            ],
+            "safe_revised_sentence": "Nilai Minimum untuk SQRTSPES pada Tabel_2_1 adalah 0.24 (nilai eksak sel: .236643191323985)."
+          }
+        },
+        {
+          "finding_id": "F-C_6_40-FORMULA",
+          "verdict": "INLINE_FORMULA_NARRATIVE_CONTRADICTION",
+          "severity": "HIGH",
+          "claim_source": {
+            "page": 6,
+            "text": "Zkurtosis = 0,71",
+            "bbox": [
+              149.4,
+              170.0,
+              228.4,
+              182.0
+            ]
+          },
+          "table_evidence": {
+            "table_id": "Tabel 4.3",
+            "page": 6,
+            "cells": []
+          },
+          "diff_details": {
+            "claimed_val": "0.71",
+            "table_val": "0.707",
+            "table_rounded": 0.707,
+            "diff": 0.34,
+            "row_label": "Z_kurtosis",
+            "col_name": "Perhitungan Rumus"
+          },
+          "math_and_logic_trace": {
+            "operation": "INLINE_FORMULA_ARITHMETIC_EVAL",
+            "metric_name": "Z_kurtosis",
+            "reranker_confidence": 0.98,
+            "nli_label": "CONTRADICTION",
+            "formula_display": "Z_kurtosis: Hitung Rumus = 0.71 != Klaim Narasi = 1.05 (Kontradiksi Langsung Penulis)"
+          },
+          "pedagogical_prompt": {
+            "question": "Mengapa hasil perhitungan kurtosis pada narasi bertentangan dengan rumus?",
+            "options": [
+              {
+                "id": "A",
+                "text": "Hasil hitungan rumus menghasilkan Z = 0.71, namun narasi kesimpulan menyatakan angka yang berbeda (1.05).",
+                "is_correct": true
+              },
+              {
+                "id": "B",
+                "text": "Rumus pembagi normalitas harus menggunakan N, bukan akar N.",
+                "is_correct": false
+              }
+            ],
+            "safe_revised_sentence": "Hasil hitung rumus Z_kurtosis yang benar adalah 0.71 (atau eksak 0.707)."
+          }
+        }
+      ],
+      "t_read_ms": 2756.9,
+      "t_audit_ms": 317.2,
+      "t_total_ms": 3074.1,
+      "status": "SUCCESS"
+    },
+    {
+      "file_name": "DOC-1794831519_1684202047-BAB IV.pdf",
+      "size_kb": 327.12890625,
+      "pages": 13,
+      "tables_count": 12,
+      "claims_count": 64,
+      "summary": {
+        "total_claims_checked": 64,
+        "pass_count": 53,
+        "warn_rounding_count": 0,
+        "contradiction_or_flip_count": 0,
+        "skip_nei_count": 11
+      },
+      "findings_count": 0,
+      "findings": [],
+      "t_read_ms": 2278.7,
+      "t_audit_ms": 148.0,
+      "t_total_ms": 2426.7,
+      "status": "SUCCESS"
+    },
+    {
+      "file_name": "DOC-1794831723_BAB IV-Elsa Oktaviana-215504457-SKRIPSI-2025.pdf",
+      "size_kb": 555.9248046875,
+      "pages": 27,
+      "tables_count": 9,
+      "claims_count": 211,
+      "summary": {
+        "total_claims_checked": 211,
+        "pass_count": 149,
+        "warn_rounding_count": 0,
+        "contradiction_or_flip_count": 0,
+        "skip_nei_count": 62
+      },
+      "findings_count": 0,
+      "findings": [],
+      "t_read_ms": 3855.2,
+      "t_audit_ms": 256.9,
+      "t_total_ms": 4112.1,
+      "status": "SUCCESS"
+    },
+    {
+      "file_name": "DOC-1794831788_SKRIPSI_Ahmad-Asadel_2109020157.pdf",
+      "size_kb": 5168.5107421875,
+      "pages": 96,
+      "tables_count": 5,
+      "claims_count": 575,
+      "summary": {
+        "total_claims_checked": 575,
+        "pass_count": 288,
+        "warn_rounding_count": 0,
+        "contradiction_or_flip_count": 0,
+        "skip_nei_count": 287
+      },
+      "findings_count": 0,
+      "findings": [],
+      "t_read_ms": 10232.3,
+      "t_audit_ms": 380.8,
+      "t_total_ms": 10613.2,
+      "status": "SUCCESS"
+    },
+    {
+      "file_name": "DOC-1794832096_jurnal.pdf",
+      "size_kb": 532.0478515625,
+      "pages": 14,
+      "tables_count": 9,
+      "claims_count": 202,
+      "summary": {
+        "total_claims_checked": 202,
+        "pass_count": 160,
+        "warn_rounding_count": 0,
+        "contradiction_or_flip_count": 0,
+        "skip_nei_count": 42
+      },
+      "findings_count": 0,
+      "findings": [],
+      "t_read_ms": 3964.0,
+      "t_audit_ms": 222.8,
+      "t_total_ms": 4186.8,
+      "status": "SUCCESS"
+    },
+    {
+      "file_name": "DOC-JURNAL-AI-09_Deteksi_Objek_Vision.pdf",
+      "size_kb": 2.0234375,
+      "pages": 1,
+      "tables_count": 1,
+      "claims_count": 2,
+      "summary": {
+        "total_claims_checked": 2,
+        "pass_count": 2,
+        "warn_rounding_count": 0,
+        "contradiction_or_flip_count": 0,
+        "skip_nei_count": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "t_read_ms": 53.1,
+      "t_audit_ms": 1.1,
+      "t_total_ms": 54.2,
+      "status": "SUCCESS"
+    },
+    {
+      "file_name": "DOC-JURNAL-STAT-06_Uji_Asumsi_Regresi.pdf",
+      "size_kb": 1.9375,
+      "pages": 1,
+      "tables_count": 1,
+      "claims_count": 2,
+      "summary": {
+        "total_claims_checked": 2,
+        "pass_count": 2,
+        "warn_rounding_count": 0,
+        "contradiction_or_flip_count": 0,
+        "skip_nei_count": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "t_read_ms": 45.4,
+      "t_audit_ms": 0.8,
+      "t_total_ms": 46.3,
+      "status": "SUCCESS"
+    },
+    {
+      "file_name": "DOC-KONTROL-10_Naskah_Bebas_Galat_100.pdf",
+      "size_kb": 2.0234375,
+      "pages": 1,
+      "tables_count": 1,
+      "claims_count": 3,
+      "summary": {
+        "total_claims_checked": 3,
+        "pass_count": 3,
+        "warn_rounding_count": 0,
+        "contradiction_or_flip_count": 0,
+        "skip_nei_count": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "t_read_ms": 55.6,
+      "t_audit_ms": 1.0,
+      "t_total_ms": 56.7,
+      "status": "SUCCESS"
+    },
+    {
+      "file_name": "DOC-SKRIPSI-CS-01_Deep_Learning_NLP.pdf",
+      "size_kb": 2.078125,
+      "pages": 1,
+      "tables_count": 1,
+      "claims_count": 2,
+      "summary": {
+        "total_claims_checked": 2,
+        "pass_count": 2,
+        "warn_rounding_count": 0,
+        "contradiction_or_flip_count": 0,
+        "skip_nei_count": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "t_read_ms": 53.0,
+      "t_audit_ms": 1.0,
+      "t_total_ms": 54.0,
+      "status": "SUCCESS"
+    },
+    {
+      "file_name": "DOC-SKRIPSI-DS-07_Segmentasi_Clustering.pdf",
+      "size_kb": 1.9697265625,
+      "pages": 1,
+      "tables_count": 1,
+      "claims_count": 2,
+      "summary": {
+        "total_claims_checked": 2,
+        "pass_count": 2,
+        "warn_rounding_count": 0,
+        "contradiction_or_flip_count": 0,
+        "skip_nei_count": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "t_read_ms": 46.8,
+      "t_audit_ms": 0.8,
+      "t_total_ms": 47.6,
+      "status": "SUCCESS"
+    },
+    {
+      "file_name": "DOC-SKRIPSI-EDU-05_Eksperimen_Pembelajaran_STEM.pdf",
+      "size_kb": 2.068359375,
+      "pages": 1,
+      "tables_count": 1,
+      "claims_count": 2,
+      "summary": {
+        "total_claims_checked": 2,
+        "pass_count": 2,
+        "warn_rounding_count": 0,
+        "contradiction_or_flip_count": 0,
+        "skip_nei_count": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "t_read_ms": 53.0,
+      "t_audit_ms": 1.1,
+      "t_total_ms": 54.1,
+      "status": "SUCCESS"
+    },
+    {
+      "file_name": "DOC-SKRIPSI-FEB-02_Rasio_Keuangan_Perbankan.pdf",
+      "size_kb": 2.0986328125,
+      "pages": 1,
+      "tables_count": 1,
+      "claims_count": 2,
+      "summary": {
+        "total_claims_checked": 2,
+        "pass_count": 0,
+        "warn_rounding_count": 0,
+        "contradiction_or_flip_count": 2,
+        "skip_nei_count": 0
+      },
+      "findings_count": 2,
+      "findings": [
+        {
+          "finding_id": "F-C_1_1-TUPLE",
+          "verdict": "DIRECT_CELL_CONTRADICTION",
+          "severity": "HIGH",
+          "claim_source": {
+            "page": 1,
+            "text": "Berdasarkan Tabel 4.2 di atas, rasio kecukupan modal (CAR) memiliki nilai minimum 14,50 dengan tingkat tertinggi pada 20,68 dan rata-rata 20,45.",
+            "bbox": [
+              31.2,
+              267.9,
+              564.1,
+              293.5
+            ]
+          },
+          "table_evidence": {
+            "table_id": "Tabel_1_1",
+            "page": 1,
+            "cells": [
+              {
+                "row": 2,
+                "col": 4,
+                "header_path": "BAB IV: ANALISIS STATISTIK DESKRIPTIF :: Penelitian ini menggunakan 40 observasi perbankan yang terdaftar di Bursa Efek Indonesia periode 2020-2023. :: Variabel yang dianalisis mencakup Capital Adequacy Ratio (CAR), Non-Performing Loan (NPL), dan Return on Assets",
+                "row_label": "CAR (%)",
+                "raw_val": "26,80",
+                "num_val": 26.8,
+                "decimals": 2,
+                "bbox": [
+                  314.7,
+                  206.7,
+                  337.2,
+                  215.7
+                ]
+              }
+            ]
+          },
+          "diff_details": {
+            "claimed_val": "14,50",
+            "table_val": "26,80",
+            "table_rounded": 26.8,
+            "diff": -12.3,
+            "row_label": "CAR (%)",
+            "col_name": "Minimum"
+          },
+          "math_and_logic_trace": {
+            "operation": "DIRECT_CELL_VALUE_VERIFICATION",
+            "metric_name": "CAR (%).Minimum",
+            "reranker_confidence": 0.96,
+            "nli_label": "CONTRADICTION",
+            "formula_display": "CAR (%) (Minimum): Klaim teks = 14,50 != Sel Tabel = 26,80 (Asli: 26.80000, Selisih Δ = 12.30)"
+          },
+          "pedagogical_prompt": {
+            "question": "Mengapa pelaporan angka 14,50 pada baris CAR (%) (Minimum) perlu diperbaiki?",
+            "options": [
+              {
+                "id": "A",
+                "text": "Berdasarkan kaidah pembulatan baku, sel tabel bernilai 26.80000 dibulatkan menjadi 26.8, bukan 14,50.",
+                "is_correct": true
+              },
+              {
+                "id": "B",
+                "text": "Nilai harus diubah menjadi format persen.",
+                "is_correct": false
+              }
+            ],
+            "safe_revised_sentence": "Nilai Minimum untuk CAR (%) pada Tabel_1_1 adalah 26.8 (nilai eksak sel: 26,80)."
+          }
+        },
+        {
+          "finding_id": "F-C_1_2-TUPLE",
+          "verdict": "DIRECT_CELL_CONTRADICTION",
+          "severity": "HIGH",
+          "claim_source": {
+            "page": 1,
+            "text": "Sementara itu rasio NPL terendah adalah 1,20 dan rata-rata 2,75.",
+            "bbox": [
+              174.6,
+              283.5,
+              465.9,
+              293.5
+            ]
+          },
+          "table_evidence": {
+            "table_id": "Tabel_1_1",
+            "page": 1,
+            "cells": [
+              {
+                "row": 3,
+                "col": 4,
+                "header_path": "BAB IV: ANALISIS STATISTIK DESKRIPTIF :: Penelitian ini menggunakan 40 observasi perbankan yang terdaftar di Bursa Efek Indonesia periode 2020-2023. :: Variabel yang dianalisis mencakup Capital Adequacy Ratio (CAR), Non-Performing Loan (NPL), dan Return on Assets",
+                "row_label": "NPL (%)",
+                "raw_val": "4,80",
+                "num_val": 4.8,
+                "decimals": 2,
+                "bbox": [
+                  317.2,
+                  223.8,
+                  334.7,
+                  232.8
+                ]
+              }
+            ]
+          },
+          "diff_details": {
+            "claimed_val": "1,20",
+            "table_val": "4,80",
+            "table_rounded": 4.8,
+            "diff": -3.6,
+            "row_label": "NPL (%)",
+            "col_name": "Minimum"
+          },
+          "math_and_logic_trace": {
+            "operation": "DIRECT_CELL_VALUE_VERIFICATION",
+            "metric_name": "NPL (%).Minimum",
+            "reranker_confidence": 0.96,
+            "nli_label": "CONTRADICTION",
+            "formula_display": "NPL (%) (Minimum): Klaim teks = 1,20 != Sel Tabel = 4,80 (Asli: 4.80000, Selisih Δ = 3.60)"
+          },
+          "pedagogical_prompt": {
+            "question": "Mengapa pelaporan angka 1,20 pada baris NPL (%) (Minimum) perlu diperbaiki?",
+            "options": [
+              {
+                "id": "A",
+                "text": "Berdasarkan kaidah pembulatan baku, sel tabel bernilai 4.80000 dibulatkan menjadi 4.8, bukan 1,20.",
+                "is_correct": true
+              },
+              {
+                "id": "B",
+                "text": "Nilai harus diubah menjadi format persen.",
+                "is_correct": false
+              }
+            ],
+            "safe_revised_sentence": "Nilai Minimum untuk NPL (%) pada Tabel_1_1 adalah 4.8 (nilai eksak sel: 4,80)."
+          }
+        }
+      ],
+      "t_read_ms": 69.0,
+      "t_audit_ms": 1.1,
+      "t_total_ms": 70.1,
+      "status": "SUCCESS"
+    },
+    {
+      "file_name": "DOC-SKRIPSI-MED-04_Uji_Klinis_Farmakologi.pdf",
+      "size_kb": 2.01171875,
+      "pages": 1,
+      "tables_count": 1,
+      "claims_count": 1,
+      "summary": {
+        "total_claims_checked": 1,
+        "pass_count": 0,
+        "warn_rounding_count": 0,
+        "contradiction_or_flip_count": 1,
+        "skip_nei_count": 0
+      },
+      "findings_count": 1,
+      "findings": [
+        {
+          "finding_id": "F-C_1_1-STAT",
+          "verdict": "DECISION_FLIP",
+          "severity": "CRITICAL",
+          "claim_source": {
+            "page": 1,
+            "text": "Pada uji biomarker lanjutan terhadap enzim sekunder, diperoleh hasil uji t ( 58 ) = 1.68 dengan nilai signifikansi p = 0.021 sehingga peneliti menyimpulkan terdapat perbedaan yang sangat signifikan antara kedua kelompok terapi.",
+            "bbox": [
+              31.2,
+              235.3,
+              564.1,
+              260.9
+            ]
+          },
+          "table_evidence": {
+            "table_id": "Tabel Statistik",
+            "page": 1,
+            "cells": []
+          },
+          "math_and_logic_trace": {
+            "operation": "STATCHECK_INTERVAL_RECALCULATION",
+            "metric_name": "t(58)",
+            "reranker_confidence": 0.994,
+            "nli_label": "CONTRADICTION",
+            "nli_probabilities": {
+              "entailment": 0.0032,
+              "neutral": 0.994,
+              "contradiction": 0.0028
+            },
+            "formula_display": "t(58) = 1.68 => p_recalc = 0.09834 (Interval: [0.09736, 0.09932]) != Reported 0.021"
+          },
+          "pedagogical_prompt": {
+            "question": "Mengapa nilai p yang dilaporkan tidak konsisten dengan nilai t-hitung?",
+            "options": [
+              {
+                "id": "A",
+                "text": "Berdasarkan fungsi distribusi t pada df=58, t=1.68 menghasilkan p = 0.09834, berbeda dari nilai lapor 0.021.",
+                "is_correct": true
+              },
+              {
+                "id": "B",
+                "text": "Derajat bebas (df) seharusnya dihitung sebagai N + 2.",
+                "is_correct": false
+              }
+            ],
+            "safe_revised_sentence": "Hasil uji hipotesis menunjukkan nilai t(58) = 1.68 dengan nilai p sebesar 0.09834 (p > 0,05)."
+          }
+        }
+      ],
+      "t_read_ms": 53.2,
+      "t_audit_ms": 406.5,
+      "t_total_ms": 459.7,
+      "status": "SUCCESS"
+    },
+    {
+      "file_name": "DOC-SKRIPSI-PSI-03_Skala_Resiliensi_Psikologi.pdf",
+      "size_kb": 1.984375,
+      "pages": 1,
+      "tables_count": 1,
+      "claims_count": 2,
+      "summary": {
+        "total_claims_checked": 2,
+        "pass_count": 2,
+        "warn_rounding_count": 0,
+        "contradiction_or_flip_count": 0,
+        "skip_nei_count": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "t_read_ms": 66.3,
+      "t_audit_ms": 1.4,
+      "t_total_ms": 67.6,
+      "status": "SUCCESS"
+    },
+    {
+      "file_name": "DOC-SKRIPSI-TIN-08_Kapabilitas_Proses.pdf",
+      "size_kb": 2.041015625,
+      "pages": 1,
+      "tables_count": 1,
+      "claims_count": 2,
+      "summary": {
+        "total_claims_checked": 2,
+        "pass_count": 2,
+        "warn_rounding_count": 0,
+        "contradiction_or_flip_count": 0,
+        "skip_nei_count": 0
+      },
+      "findings_count": 0,
+      "findings": [],
+      "t_read_ms": 79.9,
+      "t_audit_ms": 1.6,
+      "t_total_ms": 81.5,
+      "status": "SUCCESS"
+    }
+  ]
+}
