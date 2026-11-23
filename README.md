@@ -15,33 +15,19 @@
 
 `/ LO-KUS /` - dikembangkan untuk **Hackvidia Arkavidia 11.0 (HMIF ITB)**, Subtema 4: *Learning & Self-Growth*
 
-[Mulai Cepat](#-mulai-cepat) | [Cara Pakai](#-cara-pakai) | [Arsitektur](#-arsitektur) | [API](#-dokumentasi-api) | [Kontribusi](#-kontribusi)
-
-<br>
-
-<img src="docs/LOCUS_demo.gif" alt="Demo LOCUS X-Ray Studio: audit skripsi dari unggah PDF sampai sertifikat" width="900">
-
-<sub>Demo LOCUS X-Ray Studio: unggah PDF, audit offline, telusuri temuan, ekspor sertifikat.</sub>
+[Mulai Cepat](#mulai-cepat) | [Cara Pakai](#cara-pakai) | [Arsitektur](#arsitektur) | [API](#dokumentasi-api) | [Kontribusi](#kontribusi)
 
 </div>
 
 ---
 
-## Daftar Isi
+<div align="center">
 
-- [Apa itu LOCUS?](#-apa-itu-locus)
-- [Fitur Utama](#-fitur-utama)
-- [Mulai Cepat](#-mulai-cepat)
-- [Cara Pakai](#-cara-pakai)
-- [Arsitektur](#-arsitektur)
-- [Suite 8 Solver](#-suite-8-solver-deterministik)
-- [Dokumentasi API](#-dokumentasi-api)
-- [Struktur Repositori](#-struktur-repositori)
-- [Pengujian](#-pengujian)
-- [Troubleshooting](#-troubleshooting)
-- [Privasi, Etika, dan Lisensi](#-privasi-etika-dan-lisensi)
-- [Kontribusi](#-kontribusi)
-- [Sitasi](#-sitasi)
+<img src="https://ufxjvugkmiorxlogvcmx.supabase.co/storage/v1/object/public/portfolio-assets/LOCUS_demo.gif" alt="Demo LOCUS X-Ray Studio: audit skripsi dari unggah PDF sampai sertifikat" width="900">
+
+<sub>Demo LOCUS X-Ray Studio: unggah PDF, audit offline, telusuri temuan, ekspor sertifikat.</sub>
+
+</div>
 
 ---
 
