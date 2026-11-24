@@ -1,5 +1,5 @@
 {
-  "timestamp": 1795491867.9026706,
+  "timestamp": 1795501042.109783,
   "total_evaluations": 500,
   "tp": 265,
   "tn": 235,
@@ -9,8 +9,8 @@
   "recall": 1.0,
   "f1_score": 1.0,
   "accuracy": 1.0,
-  "avg_latency_ms": 15.360203742980957,
-  "total_time_sec": 7.688193082809448,
+  "avg_latency_ms": 17.159114360809326,
+  "total_time_sec": 8.590795516967773,
   "domain_stats": {
     "Machine Learning": {
       "total": 100,

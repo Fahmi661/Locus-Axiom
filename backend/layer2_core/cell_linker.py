@@ -342,8 +342,9 @@ def match_sentence_to_row(
             if r_lbl.lower() == discourse_var.lower() or match_variable_row_score(discourse_var, r_lbl) >= 0.70:
                 return r_lbl
 
-    # SemanticRowReranker: hanya jika allow_neural=True, valid_labels > 1, panjang cukup, dan ada angka
-    if allow_neural and len(valid_labels) > 1 and len(main_clause.strip()) >= 12 and re.search(r"\d", s_clean):
+    # SemanticRowReranker: hanya jika allow_neural=True, valid_labels > 1, panjang cukup, dan ada angka riil (bukan tahun/nomor sub-bab)
+    s_no_years = re.sub(r"\b(?:19|20)\d{2}\b|\b\d+\.\d+\.\d+(?:\.\d+)?\b", "", s_clean)
+    if allow_neural and len(valid_labels) > 1 and len(main_clause.strip()) >= 12 and re.search(r"\d", s_no_years):
         try:
             reranker = SemanticRowReranker.get_instance()
             if reranker.is_available:
@@ -571,20 +572,23 @@ class SemanticRowReranker:
             s_short = sentence[:120]
             unique_cands = sorted(unique_cands, key=lambda c: fuzz.token_sort_ratio(s_short, c), reverse=True)[:3]
 
-        cache_key = (sentence[:160], tuple(unique_cands), table_caption, tuple(headers) if headers else ())
+        sent_cut = sentence[:140]
+        cap_cut = (table_caption or "")[:50]
+        hdr_str = ", ".join((headers or [])[:5])[:60]
+
+        cache_key = (sent_cut, tuple(unique_cands), cap_cut, hdr_str)
         if cache_key in self._cache:
             return self._cache[cache_key]
 
         if not self.is_available or not self.session or not self.tokenizer:
             return None
 
-        hdr_str = ", ".join(headers) if headers else ""
         pairs = []
         for cand in unique_cands:
-            doc_text = f"Tabel {table_caption} | Variabel {cand}"
+            doc_text = f"Variabel {cand} | Tabel {cap_cut}"
             if hdr_str:
                 doc_text += f" | Kolom {hdr_str}"
-            pairs.append((sentence, doc_text))
+            pairs.append((sent_cut, doc_text))
 
         try:
             encs = self.tokenizer.encode_batch(pairs)
@@ -1242,37 +1246,38 @@ class CellLinker:
         if ref_typo_info:
             cited_id = ref_typo_info.get("cited_id", "")
             actual_id = ref_typo_info.get("actual_id", "")
-            act_tbl = ref_typo_info.get("actual_table") or chosen_tbl
-            t_ref_typo = build_table_ref(act_tbl) if act_tbl else f"Tabel {actual_id}"
-            t_bbox_typo = build_table_bbox_norm(act_tbl, page_dims) if act_tbl else [72, 100, 500, 200]
-            f_typo = {
-                "finding_id": f"F-{claim.get('claim_id', 'C')}-REF-TYPO",
-                "verdict": "TABLE_REFERENCE_TYPO",
-                "severity": "MEDIUM",
-                "table_ref": t_ref_typo,
-                "human_explanation": f"Salah nomor rujukan tabel: teks menyebut Tabel {cited_id}, padahal angka pada kalimat cocok dengan Tabel {actual_id} tepat di atas paragraf ini.",
-                "claim_value_display": f"Tabel {cited_id}",
-                "table_value_display": f"Tabel {actual_id}",
-                "table_bbox_norm": t_bbox_typo,
-                "claim_source": {
-                    "page": claim_page,
-                    "text": claim_text,
-                    "bbox": claim.get("bbox", [72, 100, 500, 120]),
-                    "boxes": claim.get("boxes", [])
-                },
-                "table_evidence": {
-                    "table_id": act_tbl.get("table_id") if act_tbl else actual_id,
-                    "page": act_tbl.get("page", claim_page) if act_tbl else claim_page,
-                    "cells": [],
-                    "row_snippet": None
-                },
-                "diff_details": {
-                    "claimed_val": f"Tabel {cited_id}",
-                    "table_val": f"Tabel {actual_id}",
-                    "plain_explanation": f"Salah nomor rujukan tabel: teks menyebut Tabel {cited_id}, padahal angka pada kalimat cocok dengan Tabel {actual_id} tepat di atas paragraf ini."
+            if not str(actual_id).startswith("Tabel_"):
+                act_tbl = ref_typo_info.get("actual_table") or chosen_tbl
+                t_ref_typo = build_table_ref(act_tbl) if act_tbl else f"Tabel {actual_id}"
+                t_bbox_typo = build_table_bbox_norm(act_tbl, page_dims) if act_tbl else [72, 100, 500, 200]
+                f_typo = {
+                    "finding_id": f"F-{claim.get('claim_id', 'C')}-REF-TYPO",
+                    "verdict": "TABLE_REFERENCE_TYPO",
+                    "severity": "MEDIUM",
+                    "table_ref": t_ref_typo,
+                    "human_explanation": f"Salah nomor rujukan tabel: teks menyebut Tabel {cited_id}, padahal angka pada kalimat cocok dengan Tabel {actual_id} tepat di atas paragraf ini.",
+                    "claim_value_display": f"Tabel {cited_id}",
+                    "table_value_display": f"Tabel {actual_id}",
+                    "table_bbox_norm": t_bbox_typo,
+                    "claim_source": {
+                        "page": claim_page,
+                        "text": claim_text,
+                        "bbox": claim.get("bbox", [72, 100, 500, 120]),
+                        "boxes": claim.get("boxes", [])
+                    },
+                    "table_evidence": {
+                        "table_id": act_tbl.get("table_id") if act_tbl else actual_id,
+                        "page": act_tbl.get("page", claim_page) if act_tbl else claim_page,
+                        "cells": [],
+                        "row_snippet": None
+                    },
+                    "diff_details": {
+                        "claimed_val": f"Tabel {cited_id}",
+                        "table_val": f"Tabel {actual_id}",
+                        "plain_explanation": f"Salah nomor rujukan tabel: teks menyebut Tabel {cited_id}, padahal angka pada kalimat cocok dengan Tabel {actual_id} tepat di atas paragraf ini."
+                    }
                 }
-            }
-            findings.append(f_typo)
+                findings.append(f_typo)
 
         if chosen_tbl:
             eval_tables = [chosen_tbl]
@@ -1281,7 +1286,11 @@ class CellLinker:
             if explicit_table_id:
                 # Nomor tabel eksplisit (misal "Tabel 4.99") tidak ditemukan di tables -> abstain (eval_tables = [])
                 return findings
-            eval_tables = sorted(tables, key=lambda t: abs(t.get("page", 1) - claim_page))
+            nearby_tables = [t for t in tables if abs(t.get("page", 1) - claim_page) <= 2]
+            if nearby_tables:
+                eval_tables = sorted(nearby_tables, key=lambda t: abs(t.get("page", 1) - claim_page))[:3]
+            else:
+                eval_tables = sorted(tables, key=lambda t: abs(t.get("page", 1) - claim_page))[:2]
 
         for tbl in eval_tables:
             table_headers = list(tbl.get("header_paths", []))
@@ -1611,7 +1620,8 @@ class CellLinker:
                 section_anchor_var=effective_sec_anchor,
                 table_rows_data=table_rows_raw,
                 table_caption=tbl.get("caption", ""),
-                headers=tbl.get("header_paths", [])
+                headers=tbl.get("header_paths", []),
+                allow_neural=False
             )
             if not matched_row:
                 # Sliding Discourse Entity Cache (v3.1): resolve anaphora across preceding 4 sentences
@@ -1673,6 +1683,35 @@ class CellLinker:
                     default_variable=matched_row,
                     section_anchor_variable=effective_sec_anchor
                 )
+
+                if quads and (not matched_row or any(not q.variable_name for q in quads)):
+                    neural_row = match_sentence_to_row(
+                        claim_text,
+                        row_labels,
+                        doc_aliases=doc_aliases,
+                        discourse_var=current_discourse,
+                        section_anchor_var=effective_sec_anchor,
+                        table_rows_data=table_rows_raw,
+                        table_caption=tbl.get("caption", ""),
+                        headers=tbl.get("header_paths", []),
+                        allow_neural=True
+                    )
+                    if neural_row and not is_invalid_row_label(neural_row):
+                        matched_row = neural_row
+                        target_row_cells = None
+                        for r in tbl.get("rows", []):
+                            if r and (r[0].get("row_label") == matched_row or r[0].get("raw_val") == matched_row):
+                                target_row_cells = r
+                                break
+                        if discourse_cache is not None:
+                            if matched_row in discourse_cache:
+                                discourse_cache.remove(matched_row)
+                            discourse_cache.append(matched_row)
+                            if len(discourse_cache) > 5:
+                                discourse_cache.pop(0)
+                        for q in quads:
+                            if not q.variable_name:
+                                q.variable_name = neural_row
 
                 if quads:
                     table_rows_data = []
@@ -1817,6 +1856,25 @@ class CellLinker:
                             clean_col = q_res.matched_col_label or quad.stat_type
                             if "::" in clean_col:
                                 clean_col = clean_col.split("::")[-1].strip()
+
+                            # Guard kesamaan eksak: jika angka teks dan sel tabel identik (misal 74,03 == 74,03)
+                            quad_num = getattr(quad, "numeric_value", getattr(quad, "numeric_val", None))
+                            if quad_num is not None and q_res.table_cell_value is not None:
+                                try:
+                                    if abs(float(quad_num) - float(q_res.table_cell_value)) < 1e-4:
+                                        has_verified_metric = True
+                                        continue
+                                except (ValueError, TypeError):
+                                    pass
+
+                            # Guard baris ringkasan Total/Jumlah: jika baris adalah summary (Total/Jumlah = 100%)
+                            if effective_row_label.strip().lower() in ("jumlah", "total", "total responden", "sum") and quad.stat_type in ("PERCENTAGE", "N"):
+                                if q_res.table_cell_value is not None:
+                                    try:
+                                        if float(q_res.table_cell_value) == 100.0 and not re.search(r"\b(?:total|keseluruhan|seluruh)\s+(?:responden|sampel|data|persen)", claim_text.lower()):
+                                            continue
+                                    except (ValueError, TypeError):
+                                        pass
 
                             if q_res.status == "COLUMN_SWAP_ERROR":
                                 verdict = "COLUMN_SWAP_ERROR"

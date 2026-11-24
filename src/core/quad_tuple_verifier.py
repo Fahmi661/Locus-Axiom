@@ -425,6 +425,23 @@ def extract_quad_tuples_from_sentence(
         range_stat_map[(rm.start(1), rm.end(1))] = "MINIMUM"
         range_stat_map[(rm.start(2), rm.end(2))] = "MAXIMUM"
 
+    # 2C. Deteksi pola pasangan berurutan (tertinggi dan terendah / maksimum dan minimum ... A dan B)
+    PAIR_MAX_MIN_REGEX = re.compile(
+        r"(?:tertinggi|maksimum)\s+dan\s+(?:terendah|minimum)[^0-9;.\n]{0,80}?([+-]?(?:\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d+)?%?)\s+dan\s+([+-]?(?:\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d+)?%?)",
+        re.IGNORECASE
+    )
+    for rm in PAIR_MAX_MIN_REGEX.finditer(s_norm):
+        range_stat_map[(rm.start(1), rm.end(1))] = "MAXIMUM"
+        range_stat_map[(rm.start(2), rm.end(2))] = "MINIMUM"
+
+    PAIR_MIN_MAX_REGEX = re.compile(
+        r"(?:terendah|minimum)\s+dan\s+(?:tertinggi|maksimum)[^0-9;.\n]{0,80}?([+-]?(?:\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d+)?%?)\s+dan\s+([+-]?(?:\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d+)?%?)",
+        re.IGNORECASE
+    )
+    for rm in PAIR_MIN_MAX_REGEX.finditer(s_norm):
+        range_stat_map[(rm.start(1), rm.end(1))] = "MINIMUM"
+        range_stat_map[(rm.start(2), rm.end(2))] = "MAXIMUM"
+
     # Batas klausa konjungsi kontrastif untuk Atomic Clause Splitting
     contrast_splits = [0]
     for cm in re.finditer(r"(?:,\s*|\s+)(?:sedangkan|sementara\s+itu|berbeda\s+dengan|adapun)\b|;\s*", s_lower):
@@ -438,6 +455,8 @@ def extract_quad_tuples_from_sentence(
     for m in re.finditer(r"\b\d+(?:\.\d+){2,}\b", s_lower):
         ignored_spans.append((m.start(), m.end()))
     for m in re.finditer(r"^\s*\d+(?:\.\d+)+\s+", s_lower):
+        ignored_spans.append((m.start(), m.end()))
+    for m in re.finditer(r"(?:\(\s*[xyz]\s*\d+\s*\)|\b(?:x|y|z|hipotesis|h)\s*\d+\b)", s_lower):
         ignored_spans.append((m.start(), m.end()))
 
     quad_tuples: List[ClaimQuadTuple] = []
@@ -461,8 +480,8 @@ def extract_quad_tuples_from_sentence(
 
         # Abaikan angka ambang batas baku (0.05, 0.01, 0.10, 0.1, 10.0) jika didahului penanda pembanding atau kriteria uji
         if round(val, 4) in (0.05, 0.01, 0.1, 10.0):
-            left_35 = s_norm[max(0, c_start - 35):c_start].lower()
-            if re.search(r"(?:lebih\s+besar\s+dari|lebih\s+kecil\s+dari|di\s+atas|di\s+bawah|kurang\s+dari|melebihi|alpha|taraf\s+signifikansi|batas\s+kritis|ambang|>=|<=|>|<)\s*(?:=|sebesar)?\s*$", left_35):
+            left_45 = s_lower[max(0, c_start - 45):c_start]
+            if re.search(r"(?:lebih\s+besar(?:\s+dari)?|lebih\s+kecil(?:\s+dari)?|di\s+atas|di\s+bawah|kurang\s+dari|melebihi|alpha|α|taraf\s+signifikansi|tingkat\s+signifikansi|batas\s+kritis|ambang|>=|<=|>|<)\s*(?:pada|sebesar|=)?\s*$", left_45):
                 continue
 
         # Cek operator pertidaksamaan tepat di sebelah kiri angka (18 karakter)
@@ -477,10 +496,15 @@ def extract_quad_tuples_from_sentence(
         elif re.search(r"(?:<|kurang\s+dari|di\s+bawah)\s*$", left_ctx):
             op = "LT"
 
-        # Cek jika angka merupakan batas rentang nilai
+        # Cek jika angka merupakan batas rentang nilai atau pasangan berurutan
         best_stat: Optional[str] = None
         if (c_start, c_end) in range_stat_map:
             best_stat = range_stat_map[(c_start, c_end)]
+        else:
+            for (rs, re_span), r_stat in range_stat_map.items():
+                if rs <= c_start and c_end <= re_span:
+                    best_stat = r_stat
+                    break
 
         # Cari Jenis Statistik terdekat: utamakan di sebelah kiri angka (jarak <= 85 char)
         if best_stat is None:
