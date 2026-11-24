@@ -1,6 +1,6 @@
 <div align="center">
 
-# LOCUS
+# LOCUS Axiom 3.6
 
 ### Cursor for Scientific Integrity
 
