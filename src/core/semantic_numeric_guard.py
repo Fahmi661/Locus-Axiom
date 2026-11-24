@@ -169,6 +169,14 @@ def classify_numeric_span(sentence: str, start: int, end: int, raw_token: str) -
         return "SCALE_OR_RULE_THRESHOLD"
     if re.search(r"\b(?:durbin[\s-]watson|dw)\s+(?:antara|tabel)\s*$", left_ctx_25):
         return "SCALE_OR_RULE_THRESHOLD"
+    if re.search(r"(?:lebih\s+besar\s+dari|lebih\s+kecil\s+dari|kurang\s+dari|lebih\s+dari|di\s+atas|di\s+bawah|[<>≤≥])\s*$", left_ctx_25):
+        if token_val in ("0.05", "0.01", "0.10"):
+            return "SCALE_OR_RULE_THRESHOLD"
+        try:
+            if round(float(token_val), 4) in (0.05, 0.01, 0.10):
+                return "SCALE_OR_RULE_THRESHOLD"
+        except ValueError:
+            pass
 
     # 4. NON-STATISTICAL DURATION / PERIOD
     # 'selama 3 tahun', '4 periode', 'triwulan 2', 'kuartal 3'

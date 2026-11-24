@@ -459,6 +459,12 @@ def extract_quad_tuples_from_sentence(
             continue
         val, dec, is_pct = parsed
 
+        # Abaikan angka ambang batas baku (0.05, 0.01, 0.10, 0.1, 10.0) jika didahului penanda pembanding atau kriteria uji
+        if round(val, 4) in (0.05, 0.01, 0.1, 10.0):
+            left_35 = s_norm[max(0, c_start - 35):c_start].lower()
+            if re.search(r"(?:lebih\s+besar\s+dari|lebih\s+kecil\s+dari|di\s+atas|di\s+bawah|kurang\s+dari|melebihi|alpha|taraf\s+signifikansi|batas\s+kritis|ambang|>=|<=|>|<)\s*(?:=|sebesar)?\s*$", left_35):
+                continue
+
         # Cek operator pertidaksamaan tepat di sebelah kiri angka (18 karakter)
         left_ctx = s_norm[max(0, c_start - 18):c_start].lower().strip()
         op = "EQ"

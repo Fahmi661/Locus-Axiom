@@ -91,7 +91,7 @@ class PolarityGuard:
                 if t_type == "normality":
                     normal_claim = any(w in combined for w in ["normal", "kenormalan"])
                 elif t_type == "homogeneity":
-                    normal_claim = any(w in combined for w in ["homogen", "kehomogenan"])
+                    normal_claim = any(w in combined for w in ["homogen", "kehomogenan", "asumsi terpenuhi", "memenuhi asumsi"])
                 elif t_type == "homoscedasticity":
                     normal_claim = any(w in combined for w in ["homoskedastis", "bebas heteroskedastisitas", "tidak terjadi heteroskedastisitas", "asumsi terpenuhi"])
                 else:

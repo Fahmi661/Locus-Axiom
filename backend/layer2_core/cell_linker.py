@@ -201,7 +201,8 @@ def match_sentence_to_row(
     section_anchor_var: Optional[str] = None,
     table_rows_data: Optional[List[List[str]]] = None,
     table_caption: Optional[str] = None,
-    headers: Optional[List[str]] = None
+    headers: Optional[List[str]] = None,
+    allow_neural: bool = True
 ) -> Optional[str]:
     valid_labels = [r for r in row_labels if not is_invalid_row_label(r)]
     if not valid_labels:
@@ -335,9 +336,14 @@ def match_sentence_to_row(
             if r_lbl.lower() == section_anchor_var.lower() or match_variable_row_score(section_anchor_var, r_lbl) >= 0.70:
                 return r_lbl
 
-    # Jika Prioritas 1 (exact match di main_clause) tidak menemukan variabel secara pasti DAN tidak ada section_anchor_var:
-    # Panggil SemanticRowReranker secara nyata jika reranker.is_available dan len(valid_labels) > 1
-    if len(valid_labels) > 1:
+    # Prioritas 3: Discourse variable dari kalimat sebelumnya (jika main_clause tidak menyebut variabel baru)
+    if discourse_var:
+        for r_lbl in valid_labels:
+            if r_lbl.lower() == discourse_var.lower() or match_variable_row_score(discourse_var, r_lbl) >= 0.70:
+                return r_lbl
+
+    # SemanticRowReranker: hanya jika allow_neural=True, valid_labels > 1, panjang cukup, dan ada angka
+    if allow_neural and len(valid_labels) > 1 and len(main_clause.strip()) >= 12 and re.search(r"\d", s_clean):
         try:
             reranker = SemanticRowReranker.get_instance()
             if reranker.is_available:
@@ -351,12 +357,6 @@ def match_sentence_to_row(
                     return reranked
         except Exception:
             pass
-
-    # Prioritas 3: Discourse variable dari kalimat sebelumnya
-    if discourse_var:
-        for r_lbl in valid_labels:
-            if r_lbl.lower() == discourse_var.lower() or match_variable_row_score(discourse_var, r_lbl) >= 0.70:
-                return r_lbl
 
     # DILARANG: Frasa yang hanya muncul di anak kalimat penjelas (sub_clause) menimpa Prioritas 1/2/3.
     # Jika Prioritas 1, 2, dan 3 sama sekali tidak ada, baru lakukan scoring fallback:
@@ -429,10 +429,10 @@ class NeuralNliEngine:
             try:
                 self.tokenizer = Tokenizer.from_file(tokenizer_path)
                 self.tokenizer.enable_truncation(max_length=128)
-                self.tokenizer.enable_padding(length=128)
+                self.tokenizer.enable_padding()
 
                 opts = ort.SessionOptions()
-                opts.intra_op_num_threads = 4
+                opts.intra_op_num_threads = min(4, os.cpu_count() or 4)
                 self.session = ort.InferenceSession(model_path, opts, providers=["CPUExecutionProvider"])
             except Exception as e:
                 self.session = None
@@ -531,11 +531,11 @@ class SemanticRowReranker:
         if os.path.exists(model_path) and os.path.exists(tokenizer_path):
             try:
                 self.tokenizer = Tokenizer.from_file(tokenizer_path)
-                self.tokenizer.enable_truncation(max_length=256)
-                self.tokenizer.enable_padding(length=256)
+                self.tokenizer.enable_truncation(max_length=128)
+                self.tokenizer.enable_padding()
 
                 opts = ort.SessionOptions()
-                opts.intra_op_num_threads = 2
+                opts.intra_op_num_threads = min(4, os.cpu_count() or 4)
                 opts.inter_op_num_threads = 1
                 opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
@@ -579,31 +579,32 @@ class SemanticRowReranker:
             return None
 
         hdr_str = ", ".join(headers) if headers else ""
-        best_cand = None
-        best_score = -999.0
-
+        pairs = []
         for cand in unique_cands:
             doc_text = f"Tabel {table_caption} | Variabel {cand}"
             if hdr_str:
                 doc_text += f" | Kolom {hdr_str}"
+            pairs.append((sentence, doc_text))
 
-            try:
-                enc = self.tokenizer.encode(sentence, doc_text)
-                input_ids = np.array([enc.ids], dtype=np.int64)
-                attention_mask = np.array([enc.attention_mask], dtype=np.int64)
+        try:
+            encs = self.tokenizer.encode_batch(pairs)
+            input_ids = np.array([enc.ids for enc in encs], dtype=np.int64)
+            attention_mask = np.array([enc.attention_mask for enc in encs], dtype=np.int64)
 
-                feed = {"input_ids": input_ids, "attention_mask": attention_mask}
-                input_names = [inp.name for inp in self.session.get_inputs()]
-                if "token_type_ids" in input_names:
-                    feed["token_type_ids"] = np.array([enc.type_ids], dtype=np.int64)
+            feed = {"input_ids": input_ids, "attention_mask": attention_mask}
+            input_names = [inp.name for inp in self.session.get_inputs()]
+            if "token_type_ids" in input_names:
+                feed["token_type_ids"] = np.array([enc.type_ids for enc in encs], dtype=np.int64)
 
-                outputs = self.session.run(None, feed)
-                logit = float(np.array(outputs[0]).flatten()[0])
-                if logit > best_score:
-                    best_score = logit
-                    best_cand = cand
-            except Exception:
-                continue
+            outputs = self.session.run(None, feed)
+            logits = np.array(outputs[0]).reshape(-1)
+
+            best_idx = int(np.argmax(logits))
+            best_score = float(logits[best_idx])
+            best_cand = unique_cands[best_idx]
+        except Exception:
+            self._cache[cache_key] = None
+            return None
 
         if best_cand is not None and best_score > -900.0:
             clipped_logit = max(-20.0, min(20.0, best_score))
@@ -1627,7 +1628,8 @@ class CellLinker:
                                     section_anchor_var=effective_sec_anchor,
                                     table_rows_data=table_rows_raw,
                                     table_caption=tbl.get("caption", ""),
-                                    headers=tbl.get("header_paths", [])
+                                    headers=tbl.get("header_paths", []),
+                                    allow_neural=False
                                 )
                                 if prev_match:
                                     matched_row = prev_match

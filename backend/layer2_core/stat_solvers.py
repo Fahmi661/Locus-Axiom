@@ -171,11 +171,13 @@ class StatcheckSolver:
         return result
 
 
-FORBIDDEN_GRIM_TOKENS = (
-    "SQRT", "LN", "LOG", "RESID", "RESIDUAL", "ZSCORE", "STD", "DEVIATION", "ERROR",
+FORBIDDEN_GRIM_SUBSTRINGS = (
+    "SQRT", "RESID", "RESIDUAL", "ZSCORE", "STD", "DEVIATION", "ERROR",
     "SKEW", "KURT", "ROA", "ROE", "DER", "DAR", "EPS", "DELAY", "WAKTU",
-    "TRANSFORM", "DIFF", "PERSEN", "%", "RATIO", "COEFF", "B", "T", "SIG"
+    "TRANSFORM", "DIFF", "PERSEN", "%", "RATIO", "COEFF"
 )
+FORBIDDEN_GRIM_EXACT_WORDS = ("B", "T", "SIG", "LN", "LOG")
+FORBIDDEN_GRIM_TOKENS = FORBIDDEN_GRIM_SUBSTRINGS + FORBIDDEN_GRIM_EXACT_WORDS
 
 def is_grim_applicable_strict(raw_val_str: str, n: int, row_label: str = "", col_header: str = "") -> bool:
     """
@@ -186,7 +188,9 @@ def is_grim_applicable_strict(raw_val_str: str, n: int, row_label: str = "", col
     4. Ukuran sampel N <= 10^d.
     """
     label_upper = f"{row_label} {col_header}".upper()
-    if any(tok in label_upper for tok in FORBIDDEN_GRIM_TOKENS):
+    if any(tok in label_upper for tok in FORBIDDEN_GRIM_SUBSTRINGS):
+        return False
+    if re.search(r"\b(?:B|T|SIG|LN|LOG)\b", label_upper):
         return False
     if col_header and not any(m in col_header.upper() for m in ("MEAN", "RATA", "RERATA")):
         return False
