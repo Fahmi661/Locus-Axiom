@@ -1,6 +1,6 @@
 <div align="center">
 
-# Kriteron 3.6
+# Kriteron 
 
 ### Cursor for Scientific Integrity
 
