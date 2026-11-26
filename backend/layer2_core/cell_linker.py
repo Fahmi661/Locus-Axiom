@@ -305,30 +305,68 @@ def match_sentence_to_row(
         if best_r:
             return best_r
 
-    # Cek penyebutan langsung nama variabel di KLAUSA UTAMA
-    main_matches = []
+    # Cek penyebutan langsung nama variabel di KLAUSA UTAMA atau seluruh kalimat
+    scored_candidates = []
     for r_lbl in valid_labels:
         r_low = r_lbl.lower().strip()
         r_stem = normalize_variable_stem(r_low)
-        if re.search(r"\b" + re.escape(r_low) + r"\b", main_clause_lower) or (len(r_stem) >= 3 and re.search(r"\b" + re.escape(r_stem) + r"\b", main_clause_lower)):
-            main_matches.append(r_lbl)
-        elif match_variable_row_score(main_clause, r_lbl) >= 0.75:
-            main_matches.append(r_lbl)
+        score = 0.0
 
-    if len(main_matches) == 1:
-        return main_matches[0]
-    elif len(main_matches) > 1:
-        for mm in main_matches:
-            if mm in row_num_lookup:
-                for num_m in re.finditer(r"[+-]?(?:\d+(?:[.,]\d+)?|[.,]\d+)", main_clause):
-                    num_str = re.sub(r"^([+-]?)\s*[,.](\d+)$", r"\g<1>0.\g<2>", num_m.group(0).strip()).replace(",", ".")
-                    try:
-                        num_f = float(num_str)
-                        if any(abs(num_f - val) < 0.005 for val in row_num_lookup[mm]):
-                            return mm
-                    except ValueError:
-                        pass
-        return main_matches[0]
+        # 1. Exact match full label
+        if re.search(r"\b" + re.escape(r_low) + r"\b", main_clause_lower) or (len(r_stem) >= 3 and re.search(r"\b" + re.escape(r_stem) + r"\b", main_clause_lower)):
+            score = 100.0
+        elif re.search(r"\b" + re.escape(r_low) + r"\b", s_lower) or (len(r_stem) >= 3 and re.search(r"\b" + re.escape(r_stem) + r"\b", s_lower)):
+            score = 90.0
+        elif match_variable_row_score(main_clause, r_lbl) >= 0.75:
+            score = 80.0
+        elif "-" in r_low:
+            parts = [p.strip() for p in r_low.split("-") if len(p.strip()) >= 3]
+            parent_p = parts[0] if parts else ""
+            child_p = parts[-1] if len(parts) > 1 else ""
+
+            parent_match = bool(re.search(r"\b" + re.escape(parent_p) + r"\b", s_lower))
+            child_match = bool(re.search(r"\b" + re.escape(child_p) + r"\b", s_lower) or re.search(r"\b" + re.escape(child_p) + r"\b", main_clause_lower))
+            if not child_match:
+                for g_pat in [r"eksperimen\s*1", r"eksperimen\s*2", r"eksperimen\s*3", r"kontrol"]:
+                    if (re.search(r"\b" + g_pat + r"\b", s_lower) or re.search(r"\b" + g_pat + r"\b", main_clause_lower)) and re.search(r"\b" + g_pat + r"\b", child_p):
+                        child_match = True
+                        break
+
+            # Child part (entitas spesifik baris) wajib cocok agar label induk bersama tidak merebut baris lain
+            if parent_match and child_match:
+                score = 60.0
+            elif child_match:
+                score = 30.0
+            else:
+                score = 0.0
+        else:
+            for g_pat in [r"eksperimen\s*1", r"eksperimen\s*2", r"eksperimen\s*3", r"kontrol"]:
+                if (re.search(r"\b" + g_pat + r"\b", s_lower) or re.search(r"\b" + g_pat + r"\b", main_clause_lower)) and re.search(r"\b" + g_pat + r"\b", r_low):
+                    score = 30.0
+                    break
+
+        if score > 0.0:
+            scored_candidates.append((r_lbl, score))
+
+    if scored_candidates:
+        scored_candidates.sort(key=lambda x: x[1], reverse=True)
+        top_sc = scored_candidates[0][1]
+        top_cands = [x[0] for x in scored_candidates if x[1] == top_sc]
+        if len(top_cands) == 1:
+            return top_cands[0]
+        # Disambiguasi menggunakan row_num_lookup jika ada angka di kalimat
+        if row_num_lookup:
+            for mm in top_cands:
+                if mm in row_num_lookup:
+                    for num_m in re.finditer(r"[+-]?(?:\d+(?:[.,]\d+)?|[.,]\d+)", s_clean):
+                        num_str = re.sub(r"^([+-]?)\s*[,.](\d+)$", r"\g<1>0.\g<2>", num_m.group(0).strip()).replace(",", ".")
+                        try:
+                            num_f = float(num_str)
+                            if any(abs(num_f - val) < 0.005 for val in row_num_lookup[mm]):
+                                return mm
+                        except ValueError:
+                            pass
+        return top_cands[0]
 
     # Prioritas 2: Section heading anchor variable (heading sub-bab aktif)
     if section_anchor_var:
@@ -338,9 +376,24 @@ def match_sentence_to_row(
 
     # Prioritas 3: Discourse variable dari kalimat sebelumnya (jika main_clause tidak menyebut variabel baru)
     if discourse_var:
-        for r_lbl in valid_labels:
-            if r_lbl.lower() == discourse_var.lower() or match_variable_row_score(discourse_var, r_lbl) >= 0.70:
-                return r_lbl
+        # Jangan izinkan discourse_var dipakai jika kalimat saat ini menyebut nama grup lain ("eksperimen 1", "eksperimen 2", "kontrol")
+        known_groups = [
+            r"\b(?:kelas\s+)?eksperimen\s*1\b",
+            r"\b(?:kelas\s+)?eksperimen\s*2\b",
+            r"\b(?:kelas\s+)?eksperimen\s*3\b",
+            r"\b(?:kelas\s+)?kontrol\b",
+        ]
+        disc_low = discourse_var.lower()
+        has_other_group = False
+        for g_pat in known_groups:
+            if re.search(g_pat, s_lower):
+                if not re.search(g_pat, disc_low):
+                    has_other_group = True
+                    break
+        if not has_other_group:
+            for r_lbl in valid_labels:
+                if r_lbl.lower() == discourse_var.lower() or match_variable_row_score(discourse_var, r_lbl) >= 0.70:
+                    return r_lbl
 
     # SemanticRowReranker: hanya jika allow_neural=True, valid_labels > 1, panjang cukup, dan ada angka riil (bukan tahun/nomor sub-bab)
     s_no_years = re.sub(r"\b(?:19|20)\d{2}\b|\b\d+\.\d+\.\d+(?:\.\d+)?\b", "", s_clean)
@@ -583,11 +636,10 @@ class SemanticRowReranker:
         if not self.is_available or not self.session or not self.tokenizer:
             return None
 
+        cap_clean = cap_cut[6:].strip() if cap_cut.lower().startswith("tabel ") else cap_cut.strip()
         pairs = []
         for cand in unique_cands:
-            doc_text = f"Variabel {cand} | Tabel {cap_cut}"
-            if hdr_str:
-                doc_text += f" | Kolom {hdr_str}"
+            doc_text = f"Tabel {cap_clean} | Variabel {cand}" if cap_clean else f"Variabel {cand}"
             pairs.append((sent_cut, doc_text))
 
         try:
@@ -610,10 +662,14 @@ class SemanticRowReranker:
             self._cache[cache_key] = None
             return None
 
-        if best_cand is not None and best_score > -900.0:
+        if best_cand is not None and len(logits) > 0 and best_score > -900.0:
+            exp_logits = np.exp(logits - np.max(logits))
+            probs = exp_logits / np.sum(exp_logits)
+            softmax_prob = float(probs[best_idx])
             clipped_logit = max(-20.0, min(20.0, best_score))
-            prob = 1.0 / (1.0 + math.exp(-clipped_logit))
-            if prob >= 0.55:
+            sigmoid_prob = 1.0 / (1.0 + math.exp(-clipped_logit))
+            prob = max(softmax_prob, sigmoid_prob)
+            if prob >= 0.45:
                 self._cache[cache_key] = best_cand
                 return best_cand
 
@@ -910,10 +966,13 @@ class CellLinker:
             m_pct = re.search(r"(\d+[,.]\d+)\s*%", claim_text)
             if m_pct:
                 claimed_pct = float(m_pct.group(1).replace(",", "."))
+                is_accuracy_claim = any(k in claim_text.lower() for k in ["akurasi", "accuracy"])
                 for tbl in tables:
                     if tbl.get("table_type") == "SPSS_LIKERT_FREQ":
                         continue
                     for c_idx, h_path in enumerate(tbl.get("header_paths", [])):
+                        if is_accuracy_claim and not any(k in h_path.lower() for k in ["akurasi", "accuracy"]):
+                            continue
                         if any(k in h_path.lower() for k in ["akurasi", "accuracy", "presisi", "precision", "recall"]):
                             col_series = []
                             col_cells = []
@@ -921,6 +980,19 @@ class CellLinker:
                                 if c_idx < len(row):
                                     cell = row[c_idx]
                                     if cell.get("num_val") is not None:
+                                        r_lbl = str(cell.get("row_label") or "").strip().lower()
+                                        c0_lbl = str(row[0].get("raw_val") or "").strip().lower() if len(row) > 0 else ""
+
+                                        # Lewati baris metrik evaluasi lain saat mencari nilai maksimum untuk klaim Akurasi
+                                        if is_accuracy_claim:
+                                            skip_metric_keywords = (
+                                                "class recall", "class precision", "precision", "presisi",
+                                                "recall", "f1", "macro avg", "weighted avg", "support",
+                                                "total", "jumlah"
+                                            )
+                                            if any(sm in r_lbl for sm in skip_metric_keywords) or any(sm in c0_lbl for sm in skip_metric_keywords):
+                                                continue
+
                                         v = cell["num_val"]
                                         val_pct = v if v > 1.0 else (v * 100.0)
                                         col_series.append({"label": cell.get("row_label", ""), "val": round(val_pct, 2)})
@@ -1243,11 +1315,11 @@ class CellLinker:
             scope_table_id=claim.get("scope_table_id")
         )
 
+        act_tbl = (ref_typo_info.get("actual_table") or chosen_tbl) if ref_typo_info else None
         if ref_typo_info:
             cited_id = ref_typo_info.get("cited_id", "")
             actual_id = ref_typo_info.get("actual_id", "")
             if not str(actual_id).startswith("Tabel_"):
-                act_tbl = ref_typo_info.get("actual_table") or chosen_tbl
                 t_ref_typo = build_table_ref(act_tbl) if act_tbl else f"Tabel {actual_id}"
                 t_bbox_typo = build_table_bbox_norm(act_tbl, page_dims) if act_tbl else [72, 100, 500, 200]
                 f_typo = {
@@ -1279,7 +1351,10 @@ class CellLinker:
                 }
                 findings.append(f_typo)
 
-        if chosen_tbl:
+        if ref_typo_info and act_tbl:
+            eval_tables = [act_tbl]
+            chosen_tbl = act_tbl
+        elif chosen_tbl:
             eval_tables = [chosen_tbl]
         else:
             explicit_table_id = normalize_table_id(claim_text)
@@ -1290,9 +1365,17 @@ class CellLinker:
             if nearby_tables:
                 eval_tables = sorted(nearby_tables, key=lambda t: abs(t.get("page", 1) - claim_page))[:3]
             else:
-                eval_tables = sorted(tables, key=lambda t: abs(t.get("page", 1) - claim_page))[:2]
+                # Jangan pernah menautkan klaim tanpa nomor tabel ke tabel yang berjarak > 2 halaman (mencegah halusinasi lintas bab)
+                return findings
 
         for tbl in eval_tables:
+            # Isolasi Kode Variabel Lintas Tabel (misal paragraf X2 tidak boleh dicocokkan ke Tabel X3)
+            claim_vars = set(re.findall(r"\b(x\d+|y\d*)\b", claim_text.lower()))
+            tbl_cap = str(tbl.get("caption", "") or "").lower()
+            tbl_vars = set(re.findall(r"\b(x\d+|y\d*)\b", tbl_cap))
+            if claim_vars and tbl_vars and claim_vars.isdisjoint(tbl_vars):
+                continue
+
             table_headers = list(tbl.get("header_paths", []))
             table_rows_raw = []
             for r in tbl.get("rows", []):
@@ -1647,10 +1730,24 @@ class CellLinker:
                     except Exception:
                         pass
                 if not matched_row and discourse_cache:
+                    known_groups = [
+                        r"\b(?:kelas\s+)?eksperimen\s*1\b",
+                        r"\b(?:kelas\s+)?eksperimen\s*2\b",
+                        r"\b(?:kelas\s+)?eksperimen\s*3\b",
+                        r"\b(?:kelas\s+)?kontrol\b",
+                    ]
                     for prev_row in reversed(discourse_cache):
                         if prev_row in row_labels and not is_invalid_row_label(prev_row):
-                            matched_row = prev_row
-                            break
+                            p_low = prev_row.lower()
+                            has_conflict = False
+                            for g_pat in known_groups:
+                                if re.search(g_pat, claim_text.lower()):
+                                    if not re.search(g_pat, p_low):
+                                        has_conflict = True
+                                        break
+                            if not has_conflict:
+                                matched_row = prev_row
+                                break
 
             # Update discourse cache whenever a valid row is identified for this sentence!
             if matched_row and not is_invalid_row_label(matched_row):
@@ -1680,11 +1777,31 @@ class CellLinker:
                 quads = extract_quad_tuples_from_sentence(
                     claim_text,
                     candidate_table_variables=candidate_table_vars,
-                    default_variable=matched_row,
+                    default_variable=(matched_row or "__NEEDS_NEURAL__"),
                     section_anchor_variable=effective_sec_anchor
                 )
 
-                if quads and (not matched_row or any(not q.variable_name for q in quads)):
+                # Filter quad yang angkanya berasal dari nama kelompok/grup/tabel/halaman
+                if quads:
+                    filtered_quads = []
+                    for q in quads:
+                        raw_s = getattr(q, "raw_number_str", "")
+                        if raw_s:
+                            is_group_num = bool(re.search(
+                                r"\b(?:kelas|kelompok|group|eksperimen|kontrol|tabel|table|gambar|hal|halaman)\s*[-:]?\s*" + re.escape(raw_s) + r"\b",
+                                claim_text.lower()
+                            ))
+                            if is_group_num and q.stat_type in ("MEAN", "N", "SUM", "PERCENTAGE", "STD"):
+                                stat_match_near = bool(re.search(
+                                    r"(?:sebesar|sebanyak|nilai|rata[\s\-]+rata|mean|rerata|jumlah|total|skor)\s*(?:adalah|sebesar|yakni)?\s*" + re.escape(raw_s) + r"\b",
+                                    claim_text.lower()
+                                ))
+                                if not stat_match_near:
+                                    continue
+                        filtered_quads.append(q)
+                    quads = filtered_quads
+
+                if quads and any(getattr(q, "variable_name", "") == "__NEEDS_NEURAL__" for q in quads):
                     neural_row = match_sentence_to_row(
                         claim_text,
                         row_labels,
@@ -1710,14 +1827,16 @@ class CellLinker:
                             if len(discourse_cache) > 5:
                                 discourse_cache.pop(0)
                         for q in quads:
-                            if not q.variable_name:
+                            if getattr(q, "variable_name", "") == "__NEEDS_NEURAL__":
                                 q.variable_name = neural_row
+                    else:
+                        quads = [q for q in quads if getattr(q, "variable_name", "") != "__NEEDS_NEURAL__"]
 
                 if quads:
                     table_rows_data = []
                     for r in tbl.get("rows", []):
                         row_vals = [str(c.get("raw_val") if c.get("raw_val") is not None else "") for c in r]
-                        if r and r[0].get("row_label") and row_vals and not row_vals[0]:
+                        if r and r[0].get("row_label"):
                             row_vals[0] = str(r[0]["row_label"])
                         table_rows_data.append(row_vals)
 
@@ -1875,6 +1994,142 @@ class CellLinker:
                                             continue
                                     except (ValueError, TypeError):
                                         pass
+
+                            # Final Anti-Hallucination Exact-Value Veto Gate
+                            quad_val = getattr(quad, "numeric_value", getattr(quad, "numeric_val", None))
+                            if quad_val is not None:
+                                quad_dec = getattr(quad, "decimal_places", 2) or 0
+                                tol = (0.5 * (10 ** (-quad_dec)) + 1e-6) if quad_dec > 0 else 1e-4
+                                is_pct = getattr(quad, "is_percentage", False)
+
+                                def is_cell_val_match(v_float: Optional[float]) -> bool:
+                                    if v_float is None:
+                                        return False
+                                    if abs(v_float - quad_val) <= tol:
+                                        return True
+                                    if is_pct:
+                                        if abs(v_float * 100.0 - quad_val) <= tol or abs(v_float - quad_val / 100.0) <= (tol / 100.0 + 1e-6):
+                                            return True
+                                    if abs(v_float / 100.0 - quad_val) <= tol or abs(v_float - quad_val * 100.0) <= (tol * 100.0 + 1e-6):
+                                        return True
+                                    return False
+
+                                def get_cell_numeric(cell_obj: Dict[str, Any]) -> Optional[float]:
+                                    c_n = cell_obj.get("num_val")
+                                    if c_n is not None:
+                                        try:
+                                            return float(c_n)
+                                        except (ValueError, TypeError):
+                                            pass
+                                    r_str = str(cell_obj.get("raw_val") or "").strip()
+                                    if r_str:
+                                        parsed_r = parse_academic_number(r_str)
+                                        if parsed_r:
+                                            return float(parsed_r[0])
+                                    return None
+
+                                # Cek apakah effective_row_label disebut secara EKSPLISIT (exact/stem match) di claim_text
+                                eff_lbl_clean = (effective_row_label or "").strip().lower()
+                                is_explicit_row = False
+                                if eff_lbl_clean and not is_invalid_row_label(eff_lbl_clean):
+                                    raw_num_s = str(getattr(quad, "raw_number_str", "") or "").strip()
+                                    num_pos = claim_text.find(raw_num_s) if raw_num_s else -1
+                                    if num_pos != -1:
+                                        win_s = max(0, num_pos - 70)
+                                        win_e = min(len(claim_text), num_pos + len(raw_num_s) + 70)
+                                        target_window = claim_text[win_s:win_e].lower()
+                                    else:
+                                        target_window = claim_text.lower()
+
+                                    # 1. Exact match di window dekat angka
+                                    if re.search(r"\b" + re.escape(eff_lbl_clean) + r"\b", target_window):
+                                        is_explicit_row = True
+                                    else:
+                                        # 2. Composite label (misal "Skala Awal - Kelas Kontrol")
+                                        if "-" in eff_lbl_clean:
+                                            parts = [p.strip() for p in eff_lbl_clean.split("-") if len(p.strip()) >= 3]
+                                            specific_p = parts[-1] if parts else ""
+                                            if specific_p and re.search(r"\b" + re.escape(specific_p) + r"\b", target_window):
+                                                is_explicit_row = True
+                                            elif any(re.search(r"\b" + re.escape(p) + r"\b", target_window) for p in parts if not any(p in str(r[0].get("row_label", "")).lower() for r in tbl.get("rows", []) if str(r[0].get("row_label", "")).lower() != eff_lbl_clean)):
+                                                is_explicit_row = True
+
+                                        # 3. Stem match
+                                        if not is_explicit_row:
+                                            eff_stem = normalize_variable_stem(eff_lbl_clean).lower()
+                                            if len(eff_stem) >= 3 and re.search(r"\b" + re.escape(eff_stem) + r"\b", target_window):
+                                                is_explicit_row = True
+
+                                # Veto 1: Jika quad.numeric_value DITEMUKAN di baris lain (alt_row) pada tabel yang sama
+                                # DAN effective_row_label tidak disebut eksplisit di dekat angka tersebut
+                                alt_row_match_found = False
+                                for r in tbl.get("rows", []):
+                                    if not r:
+                                        continue
+                                    r_lbl = (r[0].get("row_label") or r[0].get("raw_val") or "").strip()
+                                    if is_invalid_row_label(r_lbl):
+                                        continue
+                                    # Pastikan bukan baris yang sedang dievaluasi
+                                    is_eval_row = (r_lbl.lower() == eff_lbl_clean)
+                                    if not is_eval_row and match_variable_row_score(effective_row_label, r_lbl) >= 0.85:
+                                        digits_eff = re.findall(r"\d+", effective_row_label)
+                                        digits_alt = re.findall(r"\d+", r_lbl)
+                                        if digits_eff == digits_alt:
+                                            is_eval_row = True
+                                    if is_eval_row:
+                                        continue
+
+                                    for cell in r:
+                                        h_path = cell.get("header_path", "")
+                                        col_type, _ = classify_column_header(h_path)
+                                        if col_type == quad.stat_type or not col_type or col_type in ("MEAN", "SUM", "N", "PERCENTAGE", "STD"):
+                                            c_val = get_cell_numeric(cell)
+                                            if is_cell_val_match(c_val):
+                                                alt_row_match_found = True
+                                                break
+                                    if alt_row_match_found:
+                                        break
+
+                                if alt_row_match_found and not is_explicit_row:
+                                    has_verified_metric = True
+                                    continue
+
+                                # Veto 2: Untuk COLUMN_SWAP_ERROR: jika pada baris yang sama (effective_row_label)
+                                # ada kolom lain dengan tipe statistik relevan yang nilainya cocok persis
+                                if q_res.status == "COLUMN_SWAP_ERROR":
+                                    same_row_stat_match = False
+                                    for r in tbl.get("rows", []):
+                                        if not r:
+                                            continue
+                                        r_lbl = (r[0].get("row_label") or r[0].get("raw_val") or "").strip()
+                                        if r_lbl.lower() == eff_lbl_clean or match_variable_row_score(effective_row_label, r_lbl) >= 0.70:
+                                            for cell in r:
+                                                h_path = cell.get("header_path", "")
+                                                col_type, _ = classify_column_header(h_path)
+                                                # Cek apakah tipe statistik sama atau relevan
+                                                is_relevant_type = (col_type == quad.stat_type)
+                                                if not is_relevant_type:
+                                                    h_low = h_path.lower()
+                                                    if quad.stat_type == "MEAN" and any(k in h_low for k in ["mean", "rata", "rerata", "pre", "post", "awal", "akhir", "kontrol", "eksperimen", "gain", "skor", "nilai"]):
+                                                        is_relevant_type = True
+                                                    elif quad.stat_type == "STD" and any(k in h_low for k in ["std", "deviasi", "sd"]):
+                                                        is_relevant_type = True
+                                                    elif quad.stat_type == "N" and any(k in h_low for k in [" n", "sample", "sampel", "jumlah", "frekuensi"]):
+                                                        is_relevant_type = True
+                                                    elif quad.stat_type == "PERCENTAGE" and any(k in h_low for k in ["persen", "%", "pct"]):
+                                                        is_relevant_type = True
+
+                                                if is_relevant_type:
+                                                    c_val = get_cell_numeric(cell)
+                                                    if is_cell_val_match(c_val):
+                                                        same_row_stat_match = True
+                                                        break
+                                            if same_row_stat_match:
+                                                break
+
+                                    if same_row_stat_match:
+                                        has_verified_metric = True
+                                        continue
 
                             if q_res.status == "COLUMN_SWAP_ERROR":
                                 verdict = "COLUMN_SWAP_ERROR"
@@ -2622,6 +2877,22 @@ class CellLinker:
                 f["table_bbox_norm"] = build_table_bbox_norm(matched_tbl, page_dims) or {
                     "page": int(t_page), "x0": 0.05, "y0": 0.1, "x1": 0.95, "y1": 0.4
                 }
+
+        # Deduplikasi temuan yang identik agar UI demo tidak menampilkan kartu berulang
+        unique_findings = []
+        seen_keys = set()
+        for f in all_findings:
+            k = (
+                f.get("claim_source", {}).get("text", "").strip(),
+                f.get("verdict"),
+                str(f.get("claim_value_display", "")).strip(),
+                str(f.get("table_value_display", "")).strip(),
+                str(f.get("table_ref", "")).strip()
+            )
+            if k not in seen_keys:
+                seen_keys.add(k)
+                unique_findings.append(f)
+        all_findings = unique_findings
 
         return {
             "document_id": doc_graph.get("document_id", "DOC-01"),

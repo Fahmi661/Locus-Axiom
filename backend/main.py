@@ -411,8 +411,12 @@ async def _execute_audit(file: UploadFile) -> Dict[str, Any]:
         VERDICT_HUMAN_LABELS = {
             "DIRECT_CELL_CONTRADICTION": "Inkonsistensi Nilai Sel",
             "VALUE_MISMATCH": "Inkonsistensi Nilai Sel",
+            "QUAD_TUPLE_VALUE_MISMATCH": "Inkonsistensi Nilai Sel",
             "COLUMN_SWAP_ERROR": "Salah Baca Kolom Tabel",
             "ROW_SUM_MISMATCH": "Ketidakcocokan Jumlah Sampel",
+            "TABLE_REFERENCE_TYPO": "Salah Nomor Rujukan Tabel",
+            "UNSUPPORTED_SUPERLATIVE": "Klaim Superlatif Tanpa Bukti",
+            "CONFUSION_MATRIX_SUM_MISMATCH": "Ketidakcocokan Jumlah Matriks",
             "WARN_TRUNCATION_ROUNDING": "Pemotongan Desimal Tanpa Pembulatan",
             "WARN_ROUNDING": "Variasi Pembulatan Desimal",
             "DECISION_FLIP_ERROR": "Pembalik Keputusan Signifikansi",

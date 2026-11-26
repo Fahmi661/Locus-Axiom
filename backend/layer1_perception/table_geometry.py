@@ -17,22 +17,47 @@ HEADER_KEYWORDS = {
 }
 
 
+def is_text_label(val: Any) -> bool:
+    """
+    Checks if a cell text is a descriptive text label (e.g. 'Kelas Kontrol', 'Skala Awal')
+    rather than purely numeric, percentage, dash, or empty symbol.
+    """
+    if val is None:
+        return False
+    v = str(val).strip()
+    if not v or v in ("-", "--", "---", "/", ".", "NA", "N/A", "None", "NaN"):
+        return False
+    # Reject pure numbers, decimals, percentages, or statistics with letter footnotes (e.g. 19, 80.00, .171, -.123, 74,03%, .144c)
+    if re.match(r"^[<>]?\s*[+-]?(?:\d{1,3}(?:[.,]\d{3})*|\d+)(?:[.,]\d+)?\s*%?[a-z]?$", v, re.IGNORECASE):
+        return False
+    # Must contain at least one word with 2+ alphabetic letters
+    return bool(re.search(r"[a-zA-Z]{2,}", v))
+
+
 def has_sub_header(sub_row: List[Any], num_cols: Optional[int] = None) -> bool:
     """
     Checks if a row is a sub-header row.
-    STRICT: Only True if valid numeric cells count is <= 1 (if cols >= 5) or 0
-    AND contains at least one header keyword.
-    Never eats the first data row (e.g. 'Ketepatan Waktu | 96 | ,00 | 1,00').
+    STRICT:
+    - Never True if any cell contains decimal numeric values (e.g. 0,804).
+    - Valid numeric cells count is <= 1 (if cols >= 5 and integer-only) or 0.
+    - Matches whole words for header keywords (never substring single-letters like 'n' or 't').
     """
     if not sub_row:
         return False
+    # If any cell contains a decimal number, it is definitely a data row, not a header!
+    for v in sub_row:
+        if v:
+            parsed = NumberNormalizer.parse_numeric(str(v))
+            if parsed and parsed.get("decimals", 0) > 0:
+                return False
+
     if num_cols is None:
         num_cols = len(sub_row)
     num_numeric = sum(1 for v in sub_row if v and NumberNormalizer.parse_numeric(str(v)) is not None)
     max_allowed_num = 1 if num_cols >= 5 else 0
     if num_numeric <= max_allowed_num:
         has_kw = any(
-            any(kw in str(v).lower() for kw in HEADER_KEYWORDS)
+            any(kw in set(re.findall(r"\b[a-zA-Z]+\b", str(v).lower())) for kw in HEADER_KEYWORDS)
             for v in sub_row if v
         )
         if has_kw:
@@ -207,7 +232,7 @@ class TableGeometryExtractor:
         above_words.sort(key=lambda w: (float(w["top"]), float(w["x0"])))
         above_text = " ".join(w["text"] for w in above_words)
 
-        matches = list(re.finditer(r"\b(Tabel\s+([IVX]+|\d+)(?:\s*[.\-]\s*(\d+))?[\.\:\s]*([^\n\r]*))", above_text, re.IGNORECASE))
+        matches = list(re.finditer(r"\b(Tabel\s+([IVX]+|\d+)(?:\s*[.\-]\s*(\d+))?[\.\:\s]*(?:(?!\bTabel\b)[^\r\n])*)", above_text, re.IGNORECASE))
         if matches:
             last_m = matches[-1]
             full_caption = last_m.group(0).strip()
@@ -334,9 +359,46 @@ class TableGeometryExtractor:
 
         # Build data rows
         structured_rows = []
+        last_valid_row_label = ""
+        parent_group = ""
         for r_idx, d_cells in enumerate(data_cells_per_line):
             row_cells = []
-            row_label = d_cells[0]["text"] if d_cells else f"Baris_{r_idx+1}"
+            if col_bounds:
+                c0_cells = [c for c in d_cells if col_bounds[0][0] <= (c["x0"] + c["x1"]) / 2.0 <= col_bounds[0][1]]
+                c1_cells = [c for c in d_cells if len(col_bounds) > 1 and col_bounds[1][0] <= (c["x0"] + c["x1"]) / 2.0 <= col_bounds[1][1]]
+                c0_text = c0_cells[0]["text"].replace("\n", " ").strip() if c0_cells else ""
+                c1_text = c1_cells[0]["text"].replace("\n", " ").strip() if c1_cells else ""
+            else:
+                c0_text = d_cells[0]["text"].replace("\n", " ").strip() if d_cells and len(d_cells) > 0 else ""
+                c1_text = d_cells[1]["text"].replace("\n", " ").strip() if d_cells and len(d_cells) > 1 else ""
+
+            is_total_row = any(w in c0_text.lower() or w in c1_text.lower() for w in ("total", "jumlah", "total responden", "sum"))
+
+            # 1. Vertical forward-fill kolom 0
+            if is_text_label(c0_text) and not is_total_row:
+                parent_group = c0_text
+            elif not c0_text and parent_group and not is_total_row:
+                c0_text = parent_group
+
+            is_c1_label = is_text_label(c1_text) and not is_total_row
+
+            # 2. Composite row label jika kolom 1 juga label teks non-numerik yang berbeda
+            if is_c1_label and c0_text and c1_text.lower() != c0_text.lower():
+                row_label = f"{c0_text} - {c1_text}"
+                last_valid_row_label = row_label
+            elif is_c1_label:
+                row_label = c1_text or c0_text or f"Baris_{r_idx+1}"
+                last_valid_row_label = row_label
+            elif is_total_row:
+                row_label = c1_text if ("total" in c1_text.lower() or "jumlah" in c1_text.lower()) else (c0_text or "Total")
+                last_valid_row_label = row_label
+            elif c0_text:
+                last_valid_row_label = c0_text
+                row_label = c0_text
+            elif last_valid_row_label:
+                row_label = last_valid_row_label
+            else:
+                row_label = f"Baris_{r_idx+1}"
 
             for c_idx, (x_l, x_r) in enumerate(col_bounds):
                 matched = [c for c in d_cells if x_l <= (c["x0"] + c["x1"]) / 2.0 <= x_r]
@@ -344,7 +406,7 @@ class TableGeometryExtractor:
                     raw_val = matched[0]["text"]
                     c_bbox = [round(matched[0]["x0"], 1), round(matched[0]["top"], 1), round(matched[0]["x1"], 1), round(matched[0]["bottom"], 1)]
                 else:
-                    raw_val = ""
+                    raw_val = c0_text if c_idx == 0 and c0_text else ""
                     c_bbox = [round(x_l, 1), round(d_cells[0]["top"], 1), round(x_r, 1), round(d_cells[0]["bottom"], 1)]
 
                 norm_info = NumberNormalizer.parse_numeric(raw_val)
@@ -439,6 +501,8 @@ class TableGeometryExtractor:
             approx_col_width = (table_bbox[2] - table_bbox[0]) / max(1, num_cols)
 
             last_valid_row_label = ""
+            parent_group = ""
+            sub_parent_group = ""
             for r_idx in range(start_r_idx, len(raw_data)):
                 row_raw = raw_data[r_idx]
                 if not row_raw:
@@ -457,21 +521,41 @@ class TableGeometryExtractor:
                                 for c in range(num_cols)
                             ]
                             c0_text = sub_row_raw[0] if sub_row_raw and sub_row_raw[0] else ""
-                            if not c0_text and last_valid_row_label:
-                                sub_val = sub_row_raw[1] if len(sub_row_raw) > 1 and sub_row_raw[1] else ""
-                                if sub_val and (sub_val.isdigit() or len(sub_val) <= 12):
-                                    row_label = f"{last_valid_row_label} :: {sub_val}"
-                                else:
-                                    row_label = last_valid_row_label
+                            c1_text = sub_row_raw[1] if len(sub_row_raw) > 1 and sub_row_raw[1] else ""
+
+                            is_total_sub = any(w in c0_text.lower() or w in c1_text.lower() for w in ("total", "jumlah", "total responden", "sum"))
+
+                            # 1. Vertical forward-fill kolom 0
+                            if is_text_label(c0_text) and not is_total_sub:
+                                parent_group = c0_text
+                            elif not c0_text and parent_group and not is_total_sub:
+                                c0_text = parent_group
+
+                            is_c1_sub_label = is_text_label(c1_text) and not is_total_sub
+
+                            # 2. Composite row label jika kolom 1 juga label teks non-numerik yang berbeda
+                            if is_c1_sub_label and c0_text and c1_text.lower() != c0_text.lower():
+                                row_label = f"{c0_text} - {c1_text}"
+                                last_valid_row_label = row_label
+                            elif is_c1_sub_label:
+                                row_label = c1_text or c0_text or f"Baris_{r_idx}_{sub_i+1}"
+                                last_valid_row_label = row_label
+                            elif is_total_sub:
+                                row_label = c1_text if ("total" in c1_text.lower() or "jumlah" in c1_text.lower()) else (c0_text or "Total")
+                                last_valid_row_label = row_label
                             elif c0_text:
                                 last_valid_row_label = c0_text
                                 row_label = c0_text
+                            elif last_valid_row_label:
+                                row_label = last_valid_row_label
                             else:
                                 row_label = f"Baris_{r_idx}_{sub_i+1}"
 
                             row_cells = []
                             for c_idx in range(num_cols):
                                 raw_val = sub_row_raw[c_idx] if c_idx < len(sub_row_raw) else ""
+                                if c_idx == 0 and not raw_val and c0_text:
+                                    raw_val = c0_text
                                 norm_info = NumberNormalizer.parse_numeric(raw_val)
                                 cell_dict = {
                                     "row": len(structured_rows) + 1,
@@ -495,17 +579,49 @@ class TableGeometryExtractor:
                             structured_rows.append(row_cells)
                         continue
 
-                # 2. Rowspan forward-fill
+                # 2. Rowspan forward-fill & composite label
                 c0_text = str(row_raw[0]).replace("\n", " ").strip() if row_raw and row_raw[0] else ""
-                if not c0_text and last_valid_row_label:
-                    sub_val = str(row_raw[1]).replace("\n", " ").strip() if len(row_raw) > 1 and row_raw[1] else ""
+                c1_text = str(row_raw[1]).replace("\n", " ").strip() if len(row_raw) > 1 and row_raw[1] else ""
+                c2_text = str(row_raw[2]).replace("\n", " ").strip() if len(row_raw) > 2 and row_raw[2] else ""
+
+                is_empty_row = not any(str(c).strip() for c in row_raw if c is not None)
+                is_total_row = any(w in c0_text.lower() or w in c1_text.lower() or w in c2_text.lower() for w in ("total", "jumlah", "total responden", "sum"))
+
+                # 1. Vertical forward-fill kolom 0 dan kolom 1 (merged vertical cells)
+                if is_text_label(c0_text) and not is_total_row:
+                    if parent_group != c0_text:
+                        sub_parent_group = ""
+                    parent_group = c0_text
+                elif not c0_text and parent_group and not is_total_row:
+                    c0_text = parent_group
+
+                if is_text_label(c1_text) and not is_total_row:
+                    sub_parent_group = c1_text
+                elif not c1_text and sub_parent_group and not is_total_row:
+                    c1_text = sub_parent_group
+
+                # 2. Composite row label jika ada label teks non-numerik di kolom 1 atau kolom 2
+                label_parts = []
+                for txt in (c0_text, c1_text, c2_text):
+                    if is_text_label(txt) and not is_total_row:
+                        if not any(txt.lower() == p.lower() for p in label_parts):
+                            label_parts.append(txt)
+
+                if len(label_parts) >= 2:
+                    row_label = " - ".join(label_parts)
+                    last_valid_row_label = row_label
+                elif len(label_parts) == 1:
+                    row_label = label_parts[0]
+                    last_valid_row_label = row_label
+                elif is_total_row:
+                    row_label = c1_text if ("total" in c1_text.lower() or "jumlah" in c1_text.lower()) else (c0_text or "Total")
+                    last_valid_row_label = row_label
+                elif last_valid_row_label:
+                    sub_val = c1_text or c2_text
                     if sub_val and (sub_val.isdigit() or len(sub_val) <= 12):
                         row_label = f"{last_valid_row_label} :: {sub_val}"
                     else:
                         row_label = last_valid_row_label
-                elif c0_text:
-                    last_valid_row_label = c0_text
-                    row_label = c0_text
                 else:
                     row_label = f"Baris_{r_idx}"
 
@@ -516,6 +632,8 @@ class TableGeometryExtractor:
 
                 for c_idx in range(num_cols):
                     raw_val = str(row_raw[c_idx]).strip() if c_idx < len(row_raw) and row_raw[c_idx] is not None else ""
+                    if c_idx == 0 and not raw_val and c0_text:
+                        raw_val = c0_text
                     norm_info = NumberNormalizer.parse_numeric(raw_val)
 
                     # Determine exact cell bounding box

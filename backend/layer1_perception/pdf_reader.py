@@ -97,6 +97,7 @@ class FastPdfReader:
             current_section_heading: Optional[str] = None
             current_section_variable: Optional[str] = None
             last_page_table_id: Optional[str] = None
+            last_table_page: Optional[int] = None
 
             for page_idx, page in enumerate(pdf.pages, start=1):
                 if cancel_event and cancel_event.is_set():
@@ -313,8 +314,10 @@ class FastPdfReader:
                         ]
                         if candidate_tables:
                             claim_scope_table_id = candidate_tables[-1].get("table_id")
-                        else:
+                        elif last_page_table_id and last_table_page == (page_idx - 1) and top <= 250.0:
                             claim_scope_table_id = last_page_table_id
+                        else:
+                            claim_scope_table_id = None
 
                         all_claims.append({
                             "claim_id": f"C_{page_idx}_{len(all_claims)+1}",
@@ -355,6 +358,7 @@ class FastPdfReader:
                     # Reset last_page_table_id saat melewati heading BAB baru
                     if re.match(r"^BAB\s+([IVX]+|\d+)\b", line_text, re.IGNORECASE):
                         last_page_table_id = None
+                        last_table_page = None
 
                     # Only flush across lines if there is a GENUINE paragraph gap (> 20pt, exceeding 1.5 line spacing)
                     # or an explicit new heading/section number
@@ -421,6 +425,7 @@ class FastPdfReader:
 
                 if page_tables:
                     last_page_table_id = page_tables[-1].get("table_id")
+                    last_table_page = page_idx
 
         # Stitch cross-page tables
         stitched_tables = TableGeometryExtractor.stitch_cross_page_tables(all_tables)

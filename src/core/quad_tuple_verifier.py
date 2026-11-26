@@ -350,6 +350,42 @@ def extract_quad_tuples_from_sentence(
     s_norm = re.sub(r"(\d+[.,]\d+)([a-z]{2,})", r"\1 \2", s_norm)
     s_lower = s_norm.lower()
 
+    # 0. Filter Kalimat Aturan / Kriteria Buku Teks:
+    # Jika s_lower mengandung frasa definisi kriteria dan tidak mengandung angka hasil uji selain 0.05 / 0.01 / 2 (2-tailed) serta sitasi tahun/halaman, langsung return []
+    criterion_phrases = ("pengambilan keputusan", "kriteria pengujian", "apabila nilai sig", "jika nilai sig")
+    if any(cp in s_lower for cp in criterion_phrases):
+        cit_spans = [
+            (cm.start(), cm.end()) for cm in re.finditer(
+                r"\([^()]*\b(?:19|20)\d{2}\s*[:;.,]\s*\d+(?:\s*-\s*\d+)?[^()]*\)", s_lower
+            )
+        ]
+        tailed_spans = [
+            (tm.start(), tm.end()) for tm in re.finditer(
+                r"(?:\(\s*\d+\s*-?\s*tailed\s*\)|\b\d+\s*-?\s*tailed\b)", s_lower
+            )
+        ]
+        has_empirical_number = False
+        for nm in NUMBER_TOKEN_REGEX.finditer(s_norm):
+            ns, ne = nm.start(), nm.end()
+            if any(cs <= ns and ne <= ce for cs, ce in cit_spans):
+                continue
+            if any(ts <= ns and ne <= te for ts, te in tailed_spans):
+                continue
+            raw_s = nm.group(1).replace(",", ".")
+            try:
+                v_flt = float(raw_s)
+            except ValueError:
+                continue
+            if 1900 <= v_flt <= 2099 and ("." not in raw_s or v_flt.is_integer()):
+                continue
+            if round(v_flt, 4) in (0.05, 0.01, 0.1, 0.001) or v_flt == 2.0:
+                continue
+            has_empirical_number = True
+            break
+
+        if not has_empirical_number:
+            return []
+
     # Cek batas klausa utama vs klausa penjelasan/interpretasi
     # Penanda: artinya, yang artinya, yang berarti, berarti, yaitu, yakni, dimana, di mana, hal ini menunjukkan, menunjukkan bahwa, sehingga
     EXPLANATORY_CLAUSE_REGEX = re.compile(
@@ -414,7 +450,7 @@ def extract_quad_tuples_from_sentence(
 
     # 2B. Deteksi pola rentang nilai (berkisar antara X sampai Y / antara X sampai Y / berkisar dari X hingga Y)
     RANGE_REGEX = re.compile(
-        r"(?:berkisar\s+antara|antara|berkisar\s+dari)\s+([+-]?(?:\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d+)?%?)\s+(?:sampai|hingga|s/d|-|–)\s+([+-]?(?:\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d+)?%?)",
+        r"(?:berkisar\s+antara|antara|berkisar\s+dari)\s+([+-]?(?:\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d+)?%?)\s+(?:sampai|hingga|s/d|-)\s+([+-]?(?:\d{1,3}(?:[.,]\d{3})+|\d+)(?:[.,]\d+)?%?)",
         re.IGNORECASE
     )
     range_stat_map: Dict[Tuple[int, int], str] = {}
@@ -456,7 +492,16 @@ def extract_quad_tuples_from_sentence(
         ignored_spans.append((m.start(), m.end()))
     for m in re.finditer(r"^\s*\d+(?:\.\d+)+\s+", s_lower):
         ignored_spans.append((m.start(), m.end()))
-    for m in re.finditer(r"(?:\(\s*[xyz]\s*\d+\s*\)|\b(?:x|y|z|hipotesis|h)\s*\d+\b)", s_lower):
+    for m in re.finditer(
+        r"(?:\(\s*[a-zA-Z]{1,3}\s*\d+(?:[.,]\d+)*\s*\)|\b(?:[xyz]|item|indikator|hipotesis|h|k|spss|iso|d|s)\s*[\.\-]?\s*\d+(?:[.,]\d+)*\b|\b[xyz]\d+(?:\.\d+)+\b|\b\d+\s*[sS]\b)",
+        s_lower,
+    ):
+        ignored_spans.append((m.start(), m.end()))
+    for m in re.finditer(r"(?:\(\s*\d+\s*-?\s*tailed\s*\)|\b\d+\s*-?\s*tailed\b)", s_lower):
+        ignored_spans.append((m.start(), m.end()))
+    for m in re.finditer(r"\([^()]*\b(?:19|20)\d{2}\s*[:;.,]\s*\d+(?:\s*-\s*\d+)?[^()]*\)", s_lower):
+        ignored_spans.append((m.start(), m.end()))
+    for m in re.finditer(r"(?:di\s*bawah|di\s*atas|dibawah|diatas)\s+(?:nilai|skor|angka|batas)?\s*\d+(?:[.,]\d+)?", s_lower):
         ignored_spans.append((m.start(), m.end()))
 
     quad_tuples: List[ClaimQuadTuple] = []
@@ -473,6 +518,14 @@ def extract_quad_tuples_from_sentence(
         if span_type != "STAT_METRIC":
             continue
 
+        # Abaikan angka yang merupakan batas interval demografi usia/masa kerja (48-58 tahun, 6 - 10 tahun, dibawah 6 tahun, lebih dari 10 tahun)
+        right_35 = s_lower[c_end:min(len(s_lower), c_end + 35)]
+        if re.search(r"^\s*(?:(?:sampai|hingga|s/d|-|\.\.)\s*\d+(?:[.,]\d+)*\s*)?(?:tahun|thn|bulan|bln|hari)\b", right_35):
+            continue
+        left_35 = s_lower[max(0, c_start - 35):c_start]
+        if re.search(r"\b(?:usia|umur|masa\s+kerja|lama\s+bekerja)\s*(?:antara|sebesar|yaitu|adalah)?\s*$", left_35):
+            continue
+
         parsed = parse_academic_number(raw_num)
         if parsed is None:
             continue
@@ -484,16 +537,16 @@ def extract_quad_tuples_from_sentence(
             if re.search(r"(?:lebih\s+besar(?:\s+dari)?|lebih\s+kecil(?:\s+dari)?|di\s+atas|di\s+bawah|kurang\s+dari|melebihi|alpha|α|taraf\s+signifikansi|tingkat\s+signifikansi|batas\s+kritis|ambang|>=|<=|>|<)\s*(?:pada|sebesar|=)?\s*$", left_45):
                 continue
 
-        # Cek operator pertidaksamaan tepat di sebelah kiri angka (18 karakter)
-        left_ctx = s_norm[max(0, c_start - 18):c_start].lower().strip()
+        # Cek operator pertidaksamaan di sebelah kiri angka (40 karakter)
+        left_op = s_lower[max(0, c_start - 40):c_start]
         op = "EQ"
-        if re.search(r"(?:>=|minimal|paling\s+sedikit)\s*$", left_ctx):
+        if re.search(r"(?:>=|≥|minimal|sekurang-kurangnya|paling\s+sedikit|tidak\s+kurang\s+dari|lebih\s+besar\s+atau\s+sama\s+dengan|lebih\s+dari\s+atau\s+sama\s+dengan)\s*(?:sebesar|senilai|adalah|yaitu|yakni|=)?\s*$", left_op):
             op = "GTE"
-        elif re.search(r"(?:>|lebih\s+dari|di\s+atas)\s*$", left_ctx):
-            op = "GT"
-        elif re.search(r"(?:<=|maksimal|paling\s+banyak)\s*$", left_ctx):
+        elif re.search(r"(?:<=|≤|maksimal|sebanyak-banyaknya|paling\s+banyak|tidak\s+lebih\s+dari|tidak\s+melebihi|kurang\s+dari\s+atau\s+sama\s+dengan|lebih\s+kecil\s+atau\s+sama\s+dengan)\s*(?:sebesar|senilai|adalah|yaitu|yakni|=)?\s*$", left_op):
             op = "LTE"
-        elif re.search(r"(?:<|kurang\s+dari|di\s+bawah)\s*$", left_ctx):
+        elif re.search(r"(?:>|lebih\s+dari|lebih\s+besar\s+dari|lebih\s+tinggi\s+dari|lebih\s+tinggi\s+dibanding(?:kan)?|di\s*atas|melebihi|melampaui)\s*(?:sebesar|senilai|adalah|yaitu|yakni|=)?\s*$", left_op):
+            op = "GT"
+        elif re.search(r"(?:<|kurang\s+dari|lebih\s+kecil\s+dari|lebih\s+rendah\s+dari|lebih\s+rendah\s+dibanding(?:kan)?|di\s*bawah)\s*(?:sebesar|senilai|adalah|yaitu|yakni|=)?\s*$", left_op):
             op = "LT"
 
         # Cek jika angka merupakan batas rentang nilai atau pasangan berurutan
@@ -537,6 +590,11 @@ def extract_quad_tuples_from_sentence(
 
         if best_stat is None and is_pct:
             best_stat = "PERCENTAGE"
+
+        # Pisahkan jumlah skor / total skor dari MEAN
+        left_skor = s_lower[max(0, c_start - 35):c_start]
+        if re.search(r"\b(?:jumlah|total)\s+skor\b\s*(?:sebesar|adalah|senilai|yakni|yaitu|=)?\s*$", left_skor):
+            best_stat = "SUM"
 
         if best_stat is None:
             continue
@@ -990,31 +1048,95 @@ def verify_quad_tuple_against_table(
             ),
         )
 
-    best_col_idx = -1
-    best_col_score = 0.0
-    best_col_label = ""
+    target_row = table_rows[best_row_idx]
 
+    col_candidates: List[Tuple[int, str, float]] = []
     for c_idx, col_name in enumerate(table_headers):
         mapped_type, c_score = classify_column_header(col_name)
-        if mapped_type == quad.stat_type and c_score > best_col_score:
-            best_col_score = c_score
-            best_col_idx = c_idx
-            best_col_label = col_name
+        if mapped_type == quad.stat_type and c_score >= min_col_score:
+            col_candidates.append((c_idx, col_name, c_score))
 
-    if best_col_idx == -1 or best_col_score < min_col_score:
+    if not col_candidates:
         return QuadVerificationResult(
             status="UNLINKED_SKIP",
             quad=quad,
             matched_row_label=best_row_label,
             row_confidence=best_row_score,
-            col_confidence=best_col_score,
+            col_confidence=0.0,
             explanation_id=(
                 f"Tabel memiliki baris '{best_row_label}', namun tidak memiliki kolom untuk statistik "
                 f"'{quad.stat_type}'. Pemeriksaan dilewati agar tidak salah membandingkan antar-kolom."
             ),
         )
 
-    target_row = table_rows[best_row_idx]
+    if len(col_candidates) == 1:
+        best_col_idx, best_col_label, best_col_score = col_candidates[0]
+    else:
+        DIFF_KEYWORDS = ("pre", "post", "awal", "akhir", "kontrol", "eksperimen", "train", "test", "sebelum", "sesudah")
+        OPPOSING_PAIRS = [("pre", "post"), ("awal", "akhir"), ("kontrol", "eksperimen"), ("train", "test"), ("sebelum", "sesudah")]
+        s_text_lower = getattr(quad, "sentence_text", "").lower()
+
+        scored_candidates: List[Tuple[int, str, float]] = []
+        for c_idx, col_name, c_score in col_candidates:
+            c_lower = col_name.lower()
+            bonus = 0.0
+            for kw in DIFF_KEYWORDS:
+                if re.search(rf"\b{re.escape(kw)}\b", c_lower) and re.search(rf"\b{re.escape(kw)}\b", s_text_lower):
+                    bonus += 0.35
+            for k1, k2 in OPPOSING_PAIRS:
+                if re.search(rf"\b{re.escape(k1)}\b", c_lower) and re.search(rf"\b{re.escape(k2)}\b", s_text_lower) and not re.search(rf"\b{re.escape(k1)}\b", s_text_lower):
+                    bonus -= 0.50
+                elif re.search(rf"\b{re.escape(k2)}\b", c_lower) and re.search(rf"\b{re.escape(k1)}\b", s_text_lower) and not re.search(rf"\b{re.escape(k2)}\b", s_text_lower):
+                    bonus -= 0.50
+            scored_candidates.append((c_idx, col_name, c_score + bonus))
+
+        # Jika masih ada kandidat kolom lain bertipe sama yang nilai selnya pada target_row
+        # cocok persis atau dalam batas pembulatan baku (VALID_EXACT / VALID_ROUNDED) dengan quad.numeric_value,
+        # pilih kolom yang cocok tersebut agar tidak salah menuduh kontradiksi lintas kolom.
+        matching_candidates: List[Tuple[int, str, float]] = []
+        for c_idx, col_name, sc in scored_candidates:
+            if c_idx < len(target_row):
+                raw_c = target_row[c_idx].strip()
+                parsed = parse_academic_number(raw_c)
+                if parsed is not None:
+                    c_val, c_dec, _ = parsed
+                    quad_op = getattr(quad, "operator", "EQ")
+                    if quad_op in ("GT", "GTE", "LT", "LTE"):
+                        eff_c_val = c_val
+                        if (quad.is_percentage or quad.stat_type == "PERCENTAGE") and 0.0 < abs(c_val) <= 1.0 and abs(quad.numeric_value) > 1.0:
+                            eff_c_val = c_val * 100.0
+                        elif not quad.is_percentage and 0.0 < abs(quad.numeric_value) <= 1.0 and 1.0 < abs(c_val) <= 100.0 and quad.stat_type == "PERCENTAGE":
+                            eff_c_val = c_val / 100.0
+
+                        is_sat = False
+                        if quad_op == "GT":
+                            is_sat = (eff_c_val > quad.numeric_value)
+                        elif quad_op == "GTE":
+                            is_sat = (eff_c_val >= quad.numeric_value - 1e-9)
+                        elif quad_op == "LT":
+                            is_sat = (eff_c_val < quad.numeric_value)
+                        elif quad_op == "LTE":
+                            is_sat = (eff_c_val <= quad.numeric_value + 1e-9)
+                        if is_sat:
+                            matching_candidates.append((c_idx, col_name, sc))
+                    else:
+                        v, _, _, _ = check_rounding_and_truncation(
+                            claim_val=quad.numeric_value,
+                            claim_decimals=quad.decimal_places,
+                            cell_val=c_val,
+                            cell_decimals=c_dec,
+                            is_claim_pct=quad.is_percentage,
+                            stat_type=quad.stat_type,
+                        )
+                        if v in ("VALID_EXACT", "VALID_ROUNDED"):
+                            matching_candidates.append((c_idx, col_name, sc))
+
+        if matching_candidates:
+            matching_candidates.sort(key=lambda x: x[2], reverse=True)
+            best_col_idx, best_col_label, best_col_score = matching_candidates[0]
+        else:
+            scored_candidates.sort(key=lambda x: x[2], reverse=True)
+            best_col_idx, best_col_label, best_col_score = scored_candidates[0]
     if best_col_idx >= len(target_row):
         return QuadVerificationResult(
             status="UNLINKED_SKIP",
@@ -1039,7 +1161,7 @@ def verify_quad_tuple_against_table(
     cell_val, cell_dec, _ = parsed_cell
 
     quad_op = getattr(quad, "operator", "EQ")
-    if quad_op != "EQ":
+    if quad_op in ("GT", "GTE", "LT", "LTE"):
         eff_cell_val = cell_val
         if (quad.is_percentage or quad.stat_type == "PERCENTAGE") and 0.0 < abs(cell_val) <= 1.0 and abs(quad.numeric_value) > 1.0:
             eff_cell_val = cell_val * 100.0
@@ -1137,6 +1259,23 @@ def verify_quad_tuple_against_table(
                 f"PERINGATAN PEMOTONGAN DESIMAL: Klaim menulis {quad.stat_type} '{quad.variable_name}' = {quad.raw_number_str} "
                 f"(hasil potong langsung dari sel {raw_cell_str}). Menurut aturan pembulatan baku {quad.decimal_places} desimal, "
                 f"seharusnya ditulis {rounded_proper:.{quad.decimal_places}f}."
+            ),
+        )
+
+    # Guard pengaman: pertidaksamaan tidak boleh memeriksa kolom swap atau truncation warning
+    if quad_op in ("GT", "GTE", "LT", "LTE"):
+        return QuadVerificationResult(
+            status="VALUE_MISMATCH",
+            quad=quad,
+            matched_row_label=best_row_label,
+            matched_col_label=best_col_label,
+            row_confidence=best_row_score,
+            col_confidence=best_col_score,
+            table_cell_raw=raw_cell_str,
+            table_cell_value=eff_cell_val,
+            explanation_id=(
+                f"PERTIDAKSAMAAN TIDAK TERPENUHI: Nilai sel ({best_row_label}, {best_col_label}) = {raw_cell_str} "
+                f"tidak memenuhi klaim batas {quad.stat_type} {quad_op} {quad.raw_number_str}."
             ),
         )
 

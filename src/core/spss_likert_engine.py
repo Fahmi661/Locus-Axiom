@@ -157,8 +157,9 @@ def resolve_table_with_ref_check(
     if scope_table_id:
         for t in all_tables:
             if t.get("table_id") == scope_table_id or t.get("normalized_id") == scope_table_id:
-                local_table = t
-                break
+                if abs(t.get("page", 0) - claim_page) <= 1:
+                    local_table = t
+                    break
 
     if not local_table:
         same_page_tables = []
@@ -173,7 +174,7 @@ def resolve_table_with_ref_check(
         if same_page_tables:
             same_page_tables.sort(key=lambda item: item[0])
             local_table = same_page_tables[0][1]
-        elif claim_page > 1:
+        elif claim_page > 1 and claim_y_top <= 250.0:
             prev_page_tables = [t for t in all_tables if t.get("page") == (claim_page - 1)]
             if prev_page_tables:
                 prev_page_tables.sort(
@@ -198,6 +199,21 @@ def resolve_table_with_ref_check(
         if candidates:
             candidates.sort(key=lambda t: abs(t.get("page", 0) - claim_page))
             explicit_table = candidates[0]
+
+    # Cek apakah kalimat merupakan kalimat pengantar tabel di bawahnya
+    s_low = sentence.lower()
+    intro_phrases = (
+        "dapat dilihat pada",
+        "disajikan pada",
+        "disajikan dalam",
+        "terlihat pada",
+        "sebagai berikut",
+        "berikut ini",
+    )
+    if any(p in s_low for p in intro_phrases):
+        if explicit_table:
+            return explicit_table, None
+        return local_table, None
 
     # 3 & 4. Periksa kecocokan angka jika explicit_table dan local_table BERBEDA
     if explicit_table and local_table and (explicit_table.get("table_id") != local_table.get("table_id")):
@@ -280,19 +296,83 @@ def is_spss_frequency_table(headers: List[str], rows: List[List[str]]) -> bool:
     """Mendeteksi apakah tabel merupakan tabel distribusi frekuensi SPSS (memiliki kolom Frequency/Percent)."""
     if not headers or not rows:
         return False
-    hl = [h.lower().strip() for h in headers]
+
+    hl = [str(h).lower().strip() for h in headers]
+
+    # 1. Kembalikan False jika header mengandung kolom rata-rata/statistik kontinu
+    has_continuous_stat = any(
+        re.search(r"\b(?:mean|rata[\s\-]+rata|rerata|std|deviasi|grand\s+mean)\b", h)
+        for h in hl
+    )
+    if has_continuous_stat:
+        return False
+
+    # 2. Kembalikan False jika header itu sendiri berisi >= 2 kategori skala Likert (Matrix Horizontal)
+    likert_header_count = 0
+    for h in hl:
+        if h in ("sts", "ts", "n", "s", "ss", "ks", "rr", "1", "2", "3", "4", "5") or any(
+            cat in h for cat in (
+                "sangat setuju",
+                "tidak setuju",
+                "sangat tidak setuju",
+                "kurang setuju",
+                "netral",
+                "ragu",
+                "cukup setuju",
+                "sangat puas",
+                "tidak puas",
+                "sangat tidak puas",
+                "sangat baik",
+                "tidak baik",
+                "sangat tidak baik",
+            )
+        ):
+            likert_header_count += 1
+    if likert_header_count >= 2:
+        return False
+
+    # 3. Cek keberadaan kolom Frekuensi dan/atau Persentase
     has_freq = any("frequency" in h or "frekuensi" in h or h in ("f", "jumlah") for h in hl)
     has_pct = any("percent" in h or "persentase" in h or "%" in h for h in hl)
-    has_likert = False
-    for r in rows[:7]:
+    if not (has_freq or has_pct):
+        return False
+
+    # 4. Wajibkan minimal >= 2 baris data di kolom kiri (rows) benar-benar berupa label kategori Likert (LIKERT_ROW_ALIASES),
+    # bukan nama item seperti X1.1 atau X2.1.
+    valid_likert_aliases = set()
+    for code, aliases in LIKERT_ROW_ALIASES.items():
+        if code != "TOTAL":
+            for a in aliases:
+                valid_likert_aliases.add(a.lower().strip())
+
+    likert_rows_count = 0
+    for r in rows:
+        if not r:
+            continue
+        # Abaikan jika baris mengandung kode item seperti X1.1, X2.1, 1.1 atau teks pertanyaan panjang
+        has_item_code = any(
+            re.search(r"\b(?:[a-zA-Z]{1,3}\d+(?:[.,]\d+)+|\d+\.\d+|item\s*\d+|indikator\s*\d+|pernyataan\s*\d+)\b", str(c).lower())
+            for c in r[:3]
+        )
+        is_long_statement = any(len(str(c).strip().split()) >= 4 for c in r[:2])
+        if has_item_code or is_long_statement:
+            continue
+
+        row_has_likert = False
         for cell in r[:3]:
             c_low = str(cell).strip().lower()
-            if any(c_low == a or c_low.startswith(a) for aliases in LIKERT_ROW_ALIASES.values() for a in aliases):
-                has_likert = True
+            if not c_low or c_low in ("valid", "missing"):
+                continue
+            if c_low in valid_likert_aliases:
+                row_has_likert = True
                 break
-        if has_likert:
-            break
-    return (has_freq and has_pct) or (has_likert and (has_freq or has_pct))
+            elif any(c_low.startswith(a) for a in valid_likert_aliases if len(a) >= 4):
+                row_has_likert = True
+                break
+        if row_has_likert:
+            likert_rows_count += 1
+
+    return likert_rows_count >= 2
 
 
 def parse_spss_frequency_table(headers: List[str], rows: List[List[str]]) -> Dict[str, CleanedSPSSRow]:
@@ -566,6 +646,11 @@ def check_likert_row_sum_in_sentence(
 
     table_total = table_cleaned["TOTAL"].cells.get("FREQUENCY")
     if table_total is None or table_total <= 0:
+        return None
+
+    # Tolak pengecekan jika table_total bukan bilangan bulat positif atau < 5
+    # agar nilai Mean/Skor seperti 11.61 tidak pernah dianggap jumlah responden N
+    if abs(table_total - round(table_total)) > 1e-3 or table_total < 5:
         return None
 
     claimed_sum = sum(c.claimed_value for c in freq_claims)
