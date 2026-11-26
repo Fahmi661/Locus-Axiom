@@ -1,6 +1,6 @@
 <div align="center">
 
-# Locus Verix 3.6
+# Kriteron 3.6
 
 ### Cursor for Scientific Integrity
 
@@ -13,7 +13,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Tests](https://img.shields.io/badge/tests-pytest-informational)
 
-`/ LO-KUS /` - dikembangkan untuk **Hackvidia Arkavidia 11.0 (HMIF ITB)**, Subtema 4: *Learning & Self-Growth*
+`/ KRI-TE-RON /` - dikembangkan untuk **Hackvidia Arkavidia 11.0 (HMIF ITB)**, Subtema 4: *Learning & Self-Growth*
 
 [Mulai Cepat](#mulai-cepat) | [Cara Pakai](#cara-pakai) | [Arsitektur](#arsitektur) | [API](#dokumentasi-api) | [Kontribusi](#kontribusi)
 
@@ -23,19 +23,19 @@
 
 <div align="center">
 
-<img src="https://ufxjvugkmiorxlogvcmx.supabase.co/storage/v1/object/public/portfolio-assets/LOCUS_demo.gif" alt="Demo LOCUS X-Ray Studio: audit skripsi dari unggah PDF sampai sertifikat" width="900">
+<img src="https://ufxjvugkmiorxlogvcmx.supabase.co/storage/v1/object/public/portfolio-assets/LOCUS_demo.gif" alt="Demo Kriteron X-Ray Studio: audit skripsi dari unggah PDF sampai sertifikat" width="900">
 
-<sub>Demo LOCUS X-Ray Studio: unggah PDF, audit offline, telusuri temuan, ekspor sertifikat.</sub>
+<sub>Demo Kriteron X-Ray Studio: unggah PDF, audit offline, telusuri temuan, ekspor sertifikat.</sub>
 
 </div>
 
 ---
 
-## Apa itu LOCUS?
+## Apa itu Kriteron?
 
 Pemeriksa plagiarisme seperti Turnitin hanya membandingkan kemiripan kata. Mereka **tidak melihat** angka di tabel yang bertentangan dengan kalimat narasi di halaman yang sama. LLM cloud juga bukan solusi: sering salah hitung, boros VRAM, dan mengirim naskah belum terbit ke server pihak ketiga.
 
-LOCUS memakai pendekatan **neuro-simbolik offline**:
+Kriteron memakai pendekatan **neuro-simbolik offline**:
 
 | Komponen | Tugas | Teknologi |
 | :-- | :-- | :-- |
@@ -79,8 +79,8 @@ Hasil: keputusan validitas dihitung deterministik (bukan ditebak model), dengan 
 ### 1. Clone repositori
 
 ```bash
-git clone https://github.com/<username>/locus.git
-cd locus
+git clone https://github.com/<username>/kriteron.git
+cd kriteron
 ```
 
 ### 2. Buat virtual environment
@@ -127,7 +127,7 @@ python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 
 | Halaman | URL |
 | :-- | :-- |
-| LOCUS Studio | http://127.0.0.1:8000/app/studio.html |
+| Kriteron Studio | http://127.0.0.1:8000/app/studio.html |
 | Landing page | http://127.0.0.1:8000/app/index.html |
 | Swagger API | http://127.0.0.1:8000/docs |
 
@@ -141,7 +141,7 @@ python desktop_launcher.py
 
 ## Cara Pakai
 
-1. Buka **LOCUS Studio**, lalu seret berkas PDF skripsi (disarankan Bab 4 atau Hasil dan Pembahasan) ke dropzone.
+1. Buka **Kriteron Studio**, lalu seret berkas PDF skripsi (disarankan Bab 4 atau Hasil dan Pembahasan) ke dropzone.
 2. Pantau progres audit (halaman ke-N, klaim ke-N). Klik **Batalkan** kapan saja jika perlu.
 3. Telusuri temuan di panel kiri. Filter: **Semua / Fatal / Peringatan / Lolos**.
 4. Klik satu temuan untuk melihat:
@@ -159,7 +159,7 @@ python desktop_launcher.py
 | `warning` | Kuning | Selisih pembulatan, pemotongan desimal, atau ketidakkonsistenan ringan |
 | `pass` | Hijau | Klaim konsisten dengan tabel |
 
-> LOCUS adalah **alat bantu audit**, bukan pengganti penilaian dosen. Selalu periksa temuan secara manual sebelum merevisi.
+> Kriteron adalah **alat bantu audit**, bukan pengganti penilaian dosen. Selalu periksa temuan secara manual sebelum merevisi.
 
 ---
 
@@ -223,7 +223,7 @@ Q = < Variabel, Statistik, Nilai Numerik, Toleransi Pembulatan >  <->  Sel Tabel
 | 3 | `GrimmerSolver` | Allard (2018) | Cek kemungkinan simpangan baku terhadap data bulat |
 | 4 | `DebitSolver` | Heathers et al. (2018) | Cek mean dan SD variabel biner |
 | 5 | `ConfusionMatrixAndSumAuditor` | Aljabar matriks | Cek akurasi, presisi, recall, F1, dan total 100% |
-| 6 | `TupleVerificationSolver` | LOCUS Quad-Tuple | Deteksi salah ketik, transposisi digit, deviasi pembulatan |
+| 6 | `TupleVerificationSolver` | Kriteron Quad-Tuple | Deteksi salah ketik, transposisi digit, deviasi pembulatan |
 | 7 | `FormulaEvalSolver` | Rumus statistik klasik | Hitung Z-skewness dan Z-kurtosis, bandingkan dengan klaim |
 | 8 | `SuperlativeTableAuditor` | Logika komparatif | Verifikasi klaim "tertinggi/terendah/dominan" terhadap seluruh tabel |
 
@@ -316,7 +316,7 @@ for fnd in data["data"]["findings"]:
 ## Struktur Repositori
 
 ```text
-locus/
+kriteron/
 ├── backend/
 │   ├── main.py                     # FastAPI, routing, worker thread
 │   ├── layer1_perception/
@@ -384,7 +384,7 @@ python -m pytest tests/ -v
 
 - **100% offline dan zero-PII.** Dokumen diproses di perangkat Anda (`127.0.0.1`). Tidak ada data dikirim ke internet. `pii_redactor.py` menyamarkan nama mahasiswa, NIM, dan nama dosen pembimbing pada sertifikat.
 - **Stack permisif.** Hanya `MIT`, `BSD-3-Clause`, dan `Apache-2.0`. Tanpa AGPL/GPL.
-- **Alat bantu, bukan hakim.** Temuan LOCUS adalah petunjuk untuk diperiksa, bukan vonis pelanggaran akademik.
+- **Alat bantu, bukan hakim.** Temuan Kriteron adalah petunjuk untuk diperiksa, bukan vonis pelanggaran akademik.
 - **Lisensi proyek:** [MIT](LICENSE).
 
 ---
@@ -405,15 +405,15 @@ Untuk bug atau usul fitur, buka **Issues** dan sertakan: versi Python, OS, langk
 
 ## Sitasi
 
-Jika LOCUS membantu penelitian Anda:
+Jika Kriteron membantu penelitian Anda:
 
 ```bibtex
-@software{locus2026,
-  title  = {LOCUS: Cursor for Scientific Integrity},
-  author = {Tim LOCUS, Universitas Negeri Jakarta},
+@software{kriteron2026,
+  title  = {Kriteron: Cursor for Scientific Integrity},
+  author = {Tim Kriteron, Universitas Negeri Jakarta},
   year   = {2026},
   note   = {Hackvidia Arkavidia 11.0, HMIF ITB},
-  url    = {https://github.com/<username>/locus}
+  url    = {https://github.com/<username>/kriteron}
 }
 ```
 
