@@ -268,3 +268,193 @@ def test_no_hardcoded_fallback_rects_on_missing_dims():
     assert f["claim_source"]["bbox"] is None
     assert f["claim_source"]["bbox"] != [72, 100, 500, 120]
     assert f["claim_source"]["bbox"] != [31.2, 289.9, 564.1, 316.9]
+
+
+# =====================================================================
+# C5 / C6 / 2.3: Strict Cell-Word Matching, Multi-Tier SPSS Headers, 3-Line Tables
+# =====================================================================
+
+def test_adjacent_cells_zero_never_lands_in_neighbor():
+    """
+    C5: Two adjacent cells with '2,67' and '0' (plus a neighboring cell containing '0' inside '10,4'):
+    the bbox of '0' must stay strictly inside its own cell_box and never match a word in the neighbor.
+    """
+    from backend.layer1_perception.table_geometry import TableGeometryExtractor
+
+    class _MockRow:
+        def __init__(self, cells):
+            self.cells = cells
+
+    class _MockTable:
+        bbox = (50.0, 100.0, 350.0, 160.0)
+        rows = [
+            _MockRow([(50.0, 100.0, 150.0, 130.0), (150.0, 100.0, 250.0, 130.0), (250.0, 100.0, 350.0, 130.0)]),
+            _MockRow([(50.0, 130.0, 150.0, 160.0), (150.0, 130.0, 250.0, 160.0), (250.0, 130.0, 350.0, 160.0)]),
+        ]
+        def extract(self):
+            return [
+                ["Variabel", "Mean", "Min"],
+                ["X1", "2,67", "0"],
+            ]
+
+    class _MockPage:
+        lines = []
+        width = 595.0
+        height = 842.0
+        def find_tables(self):
+            return [_MockTable()]
+        def extract_words(self):
+            # Notice '2,670' sits near the right border of col 1 (x=247..249.5, within 4pt of col 2!)
+            # and '0' sits cleanly inside col 2 (x=295..302).
+            # Under the old ±4pt + substring `w["text"] in raw_val` / `raw_val in w["text"]`,
+            # cell '0' (col 2: 250..350) matched '2,670' in col 1 because '0' in '2,670' and 248 >= 250-4!
+            return [
+                {"text": "Variabel", "x0": 60.0, "x1": 110.0, "top": 108.0, "bottom": 120.0},
+                {"text": "Mean", "x0": 180.0, "x1": 210.0, "top": 108.0, "bottom": 120.0},
+                {"text": "Min", "x0": 285.0, "x1": 310.0, "top": 108.0, "bottom": 120.0},
+                {"text": "X1", "x0": 60.0, "x1": 75.0, "top": 138.0, "bottom": 150.0},
+                {"text": "2,670", "x0": 236.0, "x1": 258.0, "top": 138.0, "bottom": 150.0},  # center=247.0 (in col 1!)
+                {"text": "0", "x0": 295.0, "x1": 302.0, "top": 138.0, "bottom": 150.0},      # center=298.5 (in col 2!)
+            ]
+
+    tables = TableGeometryExtractor.extract_tables_from_pdfplumber_page(_MockPage(), 1)
+    assert len(tables) == 1
+    row0 = tables[0]["rows"][0]
+    cell_mean = row0[1]
+    cell_zero = row0[2]
+
+    # Cell '0' bbox must lie strictly within col 2 [250, 350] and around word '0' (295..302)
+    assert cell_zero["bbox"][0] >= 250.0, f"Cell '0' leaked into neighbor cell: {cell_zero['bbox']}"
+    assert cell_zero["bbox"][2] <= 350.0
+    assert cell_zero["bbox"][0] >= 290.0 and cell_zero["bbox"][2] <= 306.0
+    assert cell_zero["cell_rect"] == cell_zero["bbox"]
+    assert cell_zero["bbox_approx"] is False
+
+    # Cell '2,67' numeric equality matches '2,670' inside col 1 [150, 250]
+    assert cell_mean["bbox"][0] >= 150.0 and cell_mean["bbox"][2] <= 260.0
+
+
+def test_multitier_spss_coefficients_header_unmerging():
+    """2.3: Deterministic hierarchical unmerging of standard 2-tier SPSS Coefficients headers."""
+    from backend.layer1_perception.table_geometry import TableGeometryExtractor
+
+    # Standard SPSS 2-tier Coefficients table (Layout A)
+    raw_a = [
+        ["Model", "Unstandardized Coefficients", None, "Standardized Coefficients", "t", "Sig."],
+        [None, "B", "Std. Error", "Beta", None, None],
+        ["(Constant)", "1.245", ".312", "", "3.990", ".000"],
+        ["Likuiditas", ".418", ".105", ".352", "3.981", ".000"],
+    ]
+    headers_a, start_a = TableGeometryExtractor.flatten_multitier_headers(raw_a)
+    assert start_a == 2
+    assert headers_a == [
+        "Model",
+        "Unstandardized Coefficients :: B",
+        "Unstandardized Coefficients :: Std. Error",
+        "Standardized Coefficients :: Beta",
+        "t",
+        "Sig.",
+    ]
+
+    # SPSS 2-tier Coefficients table where t and Sig. appear on row 1 under None in row 0 (Layout B)
+    raw_b = [
+        ["Model", None, "Unstandardized Coefficients", None, "Standardized Coefficients", None, None],
+        [None, None, "B", "Std. Error", "Beta", "t", "Sig."],
+        ["1", "Likuiditas", ".418", ".105", ".352", "3.981", ".000"],
+    ]
+    headers_b, start_b = TableGeometryExtractor.flatten_multitier_headers(raw_b)
+    assert start_b == 2
+    assert headers_b[2] == "Unstandardized Coefficients :: B"
+    assert headers_b[3] == "Unstandardized Coefficients :: Std. Error"
+    assert headers_b[4] == "Standardized Coefficients :: Beta"
+    assert headers_b[5] == "t"
+    assert headers_b[6] == "Sig."
+
+
+def test_3line_apa_table_keeps_negative_values_separate():
+    """2.3: Borderless 3-line APA table never merges negative values (-0,412) into adjacent columns."""
+    from backend.layer1_perception.table_geometry import TableGeometryExtractor
+
+    class _MockApaPage:
+        width = 595.0
+        height = 842.0
+        lines = [
+            {"x0": 50.0, "x1": 450.0, "top": 100.0, "bottom": 100.5},
+            {"x0": 50.0, "x1": 450.0, "top": 122.0, "bottom": 122.5},
+            {"x0": 50.0, "x1": 450.0, "top": 170.0, "bottom": 170.5},
+        ]
+        def extract_words(self):
+            return [
+                # Header line
+                {"text": "Variabel", "x0": 55.0, "x1": 105.0, "top": 105.0, "bottom": 117.0},
+                {"text": "B", "x0": 210.0, "x1": 220.0, "top": 105.0, "bottom": 117.0},
+                {"text": "Beta", "x0": 255.0, "x1": 280.0, "top": 105.0, "bottom": 117.0},
+                {"text": "t", "x0": 325.0, "x1": 332.0, "top": 105.0, "bottom": 117.0},
+                {"text": "Sig.", "x0": 375.0, "x1": 398.0, "top": 105.0, "bottom": 117.0},
+                # Data line 1 (notice only 14pt gap between 0,312 and -0,412 — previously merged by gap=25!)
+                {"text": "Ukuran", "x0": 55.0, "x1": 95.0, "top": 130.0, "bottom": 142.0},
+                {"text": "Perusahaan", "x0": 99.0, "x1": 160.0, "top": 130.0, "bottom": 142.0},
+                {"text": "0,312", "x0": 200.0, "x1": 230.0, "top": 130.0, "bottom": 142.0},
+                {"text": "-0,412", "x0": 244.0, "x1": 280.0, "top": 130.0, "bottom": 142.0},
+                {"text": "-2,145", "x0": 310.0, "x1": 346.0, "top": 130.0, "bottom": 142.0},
+                {"text": "0,034", "x0": 370.0, "x1": 400.0, "top": 130.0, "bottom": 142.0},
+            ]
+
+    tbl = TableGeometryExtractor.extract_3line_table(_MockApaPage(), 1)
+    assert tbl is not None
+    assert tbl["num_cols"] == 5, f"Expected 5 columns, got {tbl['num_cols']}: {tbl['rows']}"
+    vals = [c["raw_val"] for c in tbl["rows"][0]]
+    assert vals == ["Ukuran Perusahaan", "0,312", "-0,412", "-2,145", "0,034"]
+    assert abs(tbl["rows"][0][2]["num_val"] - (-0.412)) < 1e-6
+
+
+def test_missing_cell_box_uses_word_clustering_and_marks_uniform_approx():
+    """C6: Missing cell_box derives uneven column bounds from words; uniform fallback marks bbox_approx=True."""
+    from backend.layer1_perception.table_geometry import TableGeometryExtractor
+
+    class _MockTableNoCells:
+        bbox = (50.0, 100.0, 450.0, 160.0)
+        rows = []  # pdfplumber cell_box missing
+        def extract(self):
+            return [
+                ["Nama Variabel Panjang", "N", "Mean"],
+                ["Profitabilitas Perusahaan", "96", "12,45"],
+            ]
+
+    class _MockPageUneven:
+        lines = []
+        width = 595.0
+        height = 842.0
+        def find_tables(self):
+            return [_MockTableNoCells()]
+        def extract_words(self):
+            # Very wide col 0 (55..290), narrow col 1 (320..335), col 2 (390..430)
+            return [
+                {"text": "Nama", "x0": 55.0, "x1": 90.0, "top": 108.0, "bottom": 120.0},
+                {"text": "Variabel", "x0": 94.0, "x1": 145.0, "top": 108.0, "bottom": 120.0},
+                {"text": "Panjang", "x0": 149.0, "x1": 200.0, "top": 108.0, "bottom": 120.0},
+                {"text": "N", "x0": 324.0, "x1": 333.0, "top": 108.0, "bottom": 120.0},
+                {"text": "Mean", "x0": 395.0, "x1": 425.0, "top": 108.0, "bottom": 120.0},
+                {"text": "Profitabilitas", "x0": 55.0, "x1": 140.0, "top": 136.0, "bottom": 148.0},
+                {"text": "Perusahaan", "x0": 144.0, "x1": 225.0, "top": 136.0, "bottom": 148.0},
+                {"text": "96", "x0": 322.0, "x1": 336.0, "top": 136.0, "bottom": 148.0},
+                {"text": "12,45", "x0": 392.0, "x1": 426.0, "top": 136.0, "bottom": 148.0},
+            ]
+
+    tables = TableGeometryExtractor.extract_tables_from_pdfplumber_page(_MockPageUneven(), 1)
+    assert len(tables) == 1
+    row0 = tables[0]["rows"][0]
+    # Uniform grid would put col 1 at [183.3..316.7], completely missing word '96' at [322..336]!
+    # Clustered bounds must pinpoint '96' accurately at [322.0, 136.0, 336.0, 148.0].
+    assert row0[1]["bbox"] == [322.0, 136.0, 336.0, 148.0]
+    assert row0[2]["bbox"] == [392.0, 136.0, 426.0, 148.0]
+
+    # When NO words exist at all, uniform grid last-resort MUST flag bbox_approx=True
+    class _MockPageEmptyWords(_MockPageUneven):
+        def extract_words(self):
+            return []
+
+    tables_empty = TableGeometryExtractor.extract_tables_from_pdfplumber_page(_MockPageEmptyWords(), 1)
+    assert tables_empty[0]["rows"][0][1]["bbox_approx"] is True
+
+
