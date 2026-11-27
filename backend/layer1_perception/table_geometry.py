@@ -777,7 +777,10 @@ class TableGeometryExtractor:
                     raw_val = c0_text if c_idx == 0 and c0_text else ""
                     c_bbox = [round(x_l, 1), round(d_cells[0]["top"], 1), round(x_r, 1), round(d_cells[0]["bottom"], 1)]
 
-                norm_info = NumberNormalizer.parse_numeric(raw_val)
+                norm_info = NumberNormalizer.parse_numeric(
+                    raw_val,
+                    header_context=header_paths[c_idx],
+                )
 
                 cell_dict = {
                     "row": r_idx + 1,
@@ -855,6 +858,18 @@ class TableGeometryExtractor:
                 table_inner_words, table_bbox, len(raw_data), num_cols
             )
 
+            # Detect locale per column for context-aware SPSS vs PUEBI parsing
+            col_locales = []
+            for c_i in range(num_cols):
+                col_vals = [
+                    str(raw_data[r_i][c_i])
+                    for r_i in range(start_r_idx, len(raw_data))
+                    if raw_data[r_i] and c_i < len(raw_data[r_i]) and raw_data[r_i][c_i] is not None
+                ]
+                col_locales.append(NumberNormalizer.detect_column_locale(col_vals))
+
+            table_header_ctx = " ".join(header_paths)
+
             last_valid_row_label = ""
             parent_group = ""
             sub_parent_group = ""
@@ -912,7 +927,12 @@ class TableGeometryExtractor:
                                 raw_val = sub_row_raw[c_idx] if c_idx < len(sub_row_raw) else ""
                                 if c_idx == 0 and not raw_val and c0_text:
                                     raw_val = c0_text
-                                norm_info = NumberNormalizer.parse_numeric(raw_val)
+                                norm_info = NumberNormalizer.parse_numeric(
+                                    raw_val,
+                                    column_locale=col_locales[c_idx] if c_idx < len(col_locales) else None,
+                                    header_context=header_paths[c_idx],
+                                    table_context=table_header_ctx,
+                                )
                                 ml_cell_box = r_cells_objs_ml[c_idx] if c_idx < len(r_cells_objs_ml) else None
                                 c_bbox_ml, is_approx_ml = cls._resolve_cell_bbox_strict(
                                     cell_box=ml_cell_box,
@@ -1001,7 +1021,12 @@ class TableGeometryExtractor:
                     raw_val = str(row_raw[c_idx]).strip() if c_idx < len(row_raw) and row_raw[c_idx] is not None else ""
                     if c_idx == 0 and not raw_val and c0_text:
                         raw_val = c0_text
-                    norm_info = NumberNormalizer.parse_numeric(raw_val)
+                    norm_info = NumberNormalizer.parse_numeric(
+                        raw_val,
+                        column_locale=col_locales[c_idx] if c_idx < len(col_locales) else None,
+                        header_context=header_paths[c_idx],
+                        table_context=table_header_ctx,
+                    )
 
                     # Determine exact cell bounding box strictly inside cell_box (C5) or via word clustering (C6)
                     cell_box = r_cells_objs[c_idx] if c_idx < len(r_cells_objs) else None

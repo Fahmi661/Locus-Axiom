@@ -8,13 +8,39 @@ from decimal import Decimal
 from typing import List, Optional, Tuple, Dict, Any
 
 
+STAT_DECIMAL_CONTEXT_KEYWORDS = (
+    "sig", "p-value", "p value", "prob", "correl", "korelasi", "pearson",
+    "spearman", "kendall", "cronbach", "alpha", "reliab", "beta",
+    "r square", "r-square", "r2", "tolerance", "vif", "asymp", "exact",
+    "std", "error", "deviation", "mean", "rata", "skew", "kurt",
+    "coefficient", "koefisien", "unstandardized", "standardized"
+)
+
+STAT_DECIMAL_EXACT_TOKENS = {"r", "b", "t", "f", "z", "p", "se", "sd"}
+
+
 class NumberNormalizer:
     @staticmethod
+    def _has_stat_decimal_context(
+        header_context: Optional[str] = None,
+        table_context: Optional[str] = None,
+    ) -> bool:
+        ctx = f"{header_context or ''} {table_context or ''}".lower().strip()
+        if not ctx:
+            return False
+        if any(kw in ctx for kw in STAT_DECIMAL_CONTEXT_KEYWORDS):
+            return True
+        tokens = set(re.findall(r"[a-z0-9]+", ctx))
+        return bool(tokens & STAT_DECIMAL_EXACT_TOKENS)
+
+    @staticmethod
     def clean_token(val_str: str) -> str:
-        """Strips significance asterisks, parentheses, and leading operators."""
+        """Strips significance asterisks, parentheses, and normalizes Unicode minus signs."""
         if not val_str:
             return ""
         s = val_str.strip()
+        # Normalize Unicode minus / dashes to ASCII hyphen-minus
+        s = re.sub(r"[\u2010\u2011\u2012\u2013\u2014\u2015\u2212\ufe58\ufe63\uff0d]", "-", s)
         # Remove markdown or asterisks like ***, **, *
         s = re.sub(r"[\*†‡]", "", s)
         # Remove wrapping parentheses if present
@@ -24,7 +50,7 @@ class NumberNormalizer:
     @classmethod
     def detect_column_locale(cls, column_values: List[str]) -> str:
         """
-        Detects whether a column follows 'ID' (Indonesian PUEBI: comma decimal)
+        Detects whether a column follows 'ID_PUEBI' (Indonesian PUEBI: comma decimal)
         or 'SPSS_US' (period decimal, leading dot like .000).
         """
         comma_decimal_votes = 0
@@ -35,8 +61,13 @@ class NumberNormalizer:
             if not val:
                 continue
 
-            # SPSS leading dot: e.g. .000, .452
+            # SPSS leading dot: e.g. .000, .452, -.318
             if re.match(r"^[+-]?\.\d+", val):
+                dot_decimal_votes += 3
+                continue
+
+            # Zero-leading dot decimal: e.g. 0.000, -0.318 (never a PUEBI thousand separator)
+            if re.match(r"^[+-]?0\.\d+$", val):
                 dot_decimal_votes += 3
                 continue
 
@@ -66,35 +97,44 @@ class NumberNormalizer:
     def parse_numeric(
         cls,
         raw_val: str,
-        column_locale: Optional[str] = None
+        column_locale: Optional[str] = None,
+        header_context: Optional[str] = None,
+        table_context: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Parses a raw cell string into numeric metadata.
-        Returns: {
-            'raw': raw_val,
-            'float_val': float,
-            'decimal_val': Decimal,
-            'decimals': int,
-            'locale_used': str
-        }
+        Handles leading-dot SPSS decimals (.000, .042, -.318) and context-aware
+        disambiguation so 3-decimal statistical values like 1.000 / 0.000 in
+        correlation/reliability/sig tables are parsed as decimal floats rather
+        than PUEBI thousand separators (1000).
         """
         cleaned = cls.clean_token(raw_val)
         if not cleaned:
             return None
 
-        # SPSS leading dot or comma without zero: .000 -> 0.000, ,17 -> 0.17, -,45 -> -0.45, ,00 -> 0.0
-        cleaned = re.sub(r"^([+-]?)\s*[,.](\d+)$", r"\g<1>0.\g<2>", cleaned)
-        if cleaned.startswith("."):
-            cleaned = "0" + cleaned
-        elif cleaned.startswith("-."):
-            cleaned = "-0" + cleaned[1:]
-        elif cleaned.startswith(","):
-            cleaned = "0." + cleaned[1:]
-        elif cleaned.startswith("-,"):
-            cleaned = "-0." + cleaned[2:]
+        # Normalize SPSS leading dot/comma decimals: .000 -> 0.000, -.318 -> -0.318, ,17 -> 0.17
+        leading_dot_matched = False
+        if re.match(r"^[+-]?\s*\.\d+$", cleaned):
+            cleaned = re.sub(r"^([+-]?)\s*\.(\d+)$", r"\g<1>0.\g<2>", cleaned)
+            leading_dot_matched = True
+        elif re.match(r"^[+-]?\s*,\d+$", cleaned):
+            cleaned = re.sub(r"^([+-]?)\s*,(\d+)$", r"\g<1>0.\g<2>", cleaned)
+            leading_dot_matched = True
+
+        # Zero-leading decimal like 0.000 or -0.412 can NEVER be an Indonesian thousand separator
+        is_zero_leading_dot = bool(re.match(r"^[+-]?0\.\d+$", cleaned))
+
+        # 3-decimal statistical float like 1.000 / -1.000 / 0.852 inside stat/correlation/reliability/sig context
+        is_stat_3dec_dot = (
+            bool(re.match(r"^[+-]?\d\.\d{3}$", cleaned))
+            and "," not in cleaned
+            and cls._has_stat_decimal_context(header_context, table_context)
+        )
 
         locale = column_locale
-        if not locale or locale == "UNKNOWN":
+        if leading_dot_matched or is_zero_leading_dot or is_stat_3dec_dot:
+            locale = "SPSS_US"
+        elif not locale or locale == "UNKNOWN":
             # Heuristic single-token detection
             if "," in cleaned and "." in cleaned:
                 # 1.250,50 -> ID; 1,250.50 -> US

@@ -53,6 +53,71 @@ from backend.layer2_core.spss_likert_engine import (
 from src.core.semantic_numeric_guard import is_non_data_sentence
 
 
+def find_value_rect_in_claim(claim: Optional[Dict[str, Any]], value_display: Optional[str]) -> Optional[List[float]]:
+    """
+    C7 / 2.5: Locates the exact token bounding box [x0, top, x1, bottom] in `claim["tok_boxes"]`
+    matching `value_display` (exact normalized token or numeric value equality).
+    Returns None if no matching token box is found.
+    """
+    if not claim or not value_display:
+        return None
+    tok_boxes = claim.get("tok_boxes")
+    if not tok_boxes:
+        return None
+
+    val_str = str(value_display).strip()
+    if not val_str:
+        return None
+
+    # Extract core numeric/display token if wrapped in label like "Rata-rata = 1,4831" or "48 responden" or "48%"
+    num_m = re.search(
+        r"(?<![A-Za-z0-9_])(?:[+-]?\d+(?:[.,]\d+)+%?|[+-]?\d+%?|[+-]?[.,]\d+%?)(?![A-Za-z0-9_])",
+        val_str,
+    )
+    target_core = num_m.group(0) if num_m else val_str
+    target_core_clean = target_core.strip("()[].,;:% \u00a0")
+    target_parsed = parse_academic_number(target_core)
+    target_float = target_parsed[0] if target_parsed is not None else None
+
+    def _valid_rect(tb: Any) -> Optional[List[float]]:
+        if not isinstance(tb, (list, tuple)) or len(tb) < 5:
+            return None
+        try:
+            r = [round(float(tb[1]), 1), round(float(tb[2]), 1), round(float(tb[3]), 1), round(float(tb[4]), 1)]
+        except (TypeError, ValueError):
+            return None
+        if r[2] > r[0] and r[3] > r[1]:
+            return r
+        return None
+
+    # Pass 1: exact normalized token match
+    for tb in tok_boxes:
+        if not isinstance(tb, (list, tuple)) or len(tb) < 5:
+            continue
+        t_raw = str(tb[0]).strip()
+        t_clean = t_raw.strip("()[].,;:% \u00a0")
+        if t_raw == target_core or (target_core_clean and t_clean == target_core_clean):
+            rect = _valid_rect(tb)
+            if rect:
+                return rect
+
+    # Pass 2: numeric value match (handles '0,45' vs '.45' vs '0.45' or token with trailing punctuation like '1,4831,')
+    if target_float is not None:
+        for tb in tok_boxes:
+            if not isinstance(tb, (list, tuple)) or len(tb) < 5:
+                continue
+            t_raw = str(tb[0]).strip("()[].,;: \u00a0")
+            if not t_raw or not re.search(r"\d", t_raw):
+                continue
+            tp = parse_academic_number(t_raw)
+            if tp is not None and abs(tp[0] - target_float) <= 1e-6:
+                rect = _valid_rect(tb)
+                if rect:
+                    return rect
+
+    return None
+
+
 def make_highlighted_clause(sentence: str, target_val: str, category: Optional[str] = None) -> str:
     """Wraps the problematic sub-clause in <mark> tags."""
     if not sentence:

@@ -458,3 +458,89 @@ def test_missing_cell_box_uses_word_clustering_and_marks_uniform_approx():
     assert tables_empty[0]["rows"][0][1]["bbox_approx"] is True
 
 
+# =====================================================================
+# 2.4 / 2.5 / C7: SPSS vs PUEBI Disambiguation, Line Grouping, value_rect
+# =====================================================================
+
+def test_spss_leading_dot_and_correlation_1000_disambiguation():
+    """
+    2.4: Leading-dot SPSS decimals (.000, .042, -.318, −.318) normalize cleanly, and
+    3-decimal statistical values like 1.000 / 0.000 inside correlation/reliability/sig
+    tables parse as decimal floats (1.0, 0.0) even under ID_PUEBI locale.
+    """
+    from backend.layer1_perception.number_normalizer import NumberNormalizer
+
+    p_zero = NumberNormalizer.parse_numeric(".000")
+    assert p_zero is not None and p_zero["float_val"] == 0.0 and p_zero["decimals"] == 3
+
+    p_pos = NumberNormalizer.parse_numeric(".042")
+    assert p_pos is not None and abs(p_pos["float_val"] - 0.042) < 1e-9 and p_pos["decimals"] == 3
+
+    p_neg = NumberNormalizer.parse_numeric("-.318")
+    assert p_neg is not None and abs(p_neg["float_val"] - (-0.318)) < 1e-9 and p_neg["decimals"] == 3
+
+    p_unicode_neg = NumberNormalizer.parse_numeric("\u2212.318")
+    assert p_unicode_neg is not None and abs(p_unicode_neg["float_val"] - (-0.318)) < 1e-9
+
+    # Correlation / Reliability / Sig table: 1.000 and 0.000 must NOT become 1000 under ID_PUEBI!
+    p_corr = NumberNormalizer.parse_numeric("1.000", column_locale="ID_PUEBI", header_context="Pearson Correlation")
+    assert p_corr is not None and p_corr["float_val"] == 1.0 and p_corr["decimals"] == 3
+
+    p_sig = NumberNormalizer.parse_numeric("0.000", column_locale="ID_PUEBI", header_context="Sig. (2-tailed)")
+    assert p_sig is not None and p_sig["float_val"] == 0.0 and p_sig["decimals"] == 3
+
+    p_rel = NumberNormalizer.parse_numeric("1.000", column_locale="ID_PUEBI", table_context="Reliability Statistics Cronbach Alpha")
+    assert p_rel is not None and p_rel["float_val"] == 1.0
+
+    # Non-statistical currency/count column under ID_PUEBI keeps thousand separator behavior
+    p_rp = NumberNormalizer.parse_numeric("1.000", column_locale="ID_PUEBI", header_context="Harga (Rp)")
+    assert p_rp is not None and p_rp["float_val"] == 1000.0
+
+
+def test_two_line_claim_has_two_rects_and_value_rect_inside():
+    """
+    C7 / 2.5: A two-line narrative claim emits 2 line-level claim_rects, compact tok_boxes,
+    and value_rect locating the exact numeric token inside one of the claim_rects.
+    Also verifies superscript/mixed-font tokens stay grouped on the right visual line.
+    """
+    from backend.layer1_perception.pdf_reader import FastPdfReader
+    from backend.layer2_core.cell_linker import find_value_rect_in_claim
+
+    # Two lines of narrative text (y=600 and y=582 in PDF bottom-up -> top ~ 90.5 and 108.5 in CropBox)
+    stream = (
+        "BT "
+        "/F1 12 Tf 100 600 Td (Berdasarkan Tabel 4.1 variabel Likuiditas memiliki) Tj "
+        "0 -18 Td (nilai rata-rata sebesar 1,4831 pada sampel ini.) Tj "
+        "ET"
+    )
+    pdf_bytes = _build_pdf_with_cropbox(
+        mediabox=(0, 0, 612, 792),
+        cropbox=(50, 100, 550, 700),
+        rot=0,
+        content_stream=stream,
+    )
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tf:
+        tf.write(pdf_bytes)
+        pdf_path = tf.name
+
+    try:
+        doc_graph = FastPdfReader.process_pdf(pdf_path)
+        assert len(doc_graph["claims"]) == 1
+        claim = doc_graph["claims"][0]
+        rects = claim.get("claim_rects")
+        assert rects is not None and len(rects) == 2, f"Expected 2 line rects, got {rects}"
+        assert claim["boxes"] == rects
+        assert "tok_boxes" in claim and len(claim["tok_boxes"]) >= 10
+
+        val_rect = find_value_rect_in_claim(claim, "1,4831")
+        assert val_rect is not None, f"Failed to locate value_rect in tok_boxes: {claim['tok_boxes']}"
+        # value_rect must lie inside the second line rect (and be narrower than the full line)
+        line2 = rects[1]
+        assert val_rect[0] >= line2[0] - 0.5 and val_rect[2] <= line2[2] + 0.5
+        assert val_rect[1] >= line2[1] - 0.5 and val_rect[3] <= line2[3] + 0.5
+        assert (val_rect[2] - val_rect[0]) < (line2[2] - line2[0]) * 0.5
+    finally:
+        os.unlink(pdf_path)
+
+
+

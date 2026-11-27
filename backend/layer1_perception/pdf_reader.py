@@ -122,6 +122,54 @@ def _normalize_table_to_visible_frame(
     return tbl
 
 
+def _group_words_into_visual_lines(words: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
+    """
+    C7 / 2.5: Groups words into visual lines using vertical midpoint `mid = (top + bottom) / 2`
+    against the running mean `mid` of the current line with tolerance `0.5 * word_height`,
+    then sorts words inside each line left-to-right by `x0`.
+    Handles superscripts and mixed font sizes without splitting or reordering lines.
+    """
+    if not words:
+        return []
+    ordered = sorted(
+        words,
+        key=lambda item: (0.5 * (float(item["top"]) + float(item["bottom"])), float(item["x0"]))
+    )
+    lines: List[List[Dict[str, Any]]] = []
+    line_mid_sums: List[float] = []
+    line_h_sums: List[float] = []
+
+    for w in ordered:
+        w_top = float(w["top"])
+        w_bot = float(w["bottom"])
+        w_mid = 0.5 * (w_top + w_bot)
+        w_h = max(4.0, w_bot - w_top)
+
+        if not lines:
+            lines.append([w])
+            line_mid_sums.append(w_mid)
+            line_h_sums.append(w_h)
+            continue
+
+        curr_cnt = len(lines[-1])
+        mean_mid = line_mid_sums[-1] / curr_cnt
+        mean_h = line_h_sums[-1] / curr_cnt
+        tol = 0.5 * max(w_h, mean_h)
+
+        if abs(w_mid - mean_mid) <= tol:
+            lines[-1].append(w)
+            line_mid_sums[-1] += w_mid
+            line_h_sums[-1] += w_h
+        else:
+            lines.append([w])
+            line_mid_sums.append(w_mid)
+            line_h_sums.append(w_h)
+
+    for line in lines:
+        line.sort(key=lambda item: float(item["x0"]))
+    return lines
+
+
 class FastPdfReader:
     RENDER_SCALE: float = RENDER_SCALE
 
@@ -467,16 +515,8 @@ class FastPdfReader:
                     if not in_any_table and not is_header_footer:
                         clean_words.append(w)
 
-                # Group narrative words into visual lines based on vertical overlap
-                clean_words.sort(key=lambda item: (float(item["top"]), float(item["x0"])))
-                lines: List[List[Dict[str, Any]]] = []
-                for w in clean_words:
-                    if not lines or abs(float(w["top"]) - float(lines[-1][0]["top"])) > 5.5:
-                        lines.append([w])
-                    else:
-                        lines[-1].append(w)
-                for line in lines:
-                    line.sort(key=lambda item: float(item["x0"]))
+                # Group narrative words into visual lines using midpoint mean clustering (C7)
+                lines: List[List[Dict[str, Any]]] = _group_words_into_visual_lines(clean_words)
 
                 # Assemble into tight sentence-level claims and formula clauses
                 curr_tokens: List[Dict[str, Any]] = []
@@ -487,21 +527,27 @@ class FastPdfReader:
                     sent = " ".join(t["text"] for t in tokens).strip()
                     min_len = 6 if is_formula else 15
                     if len(sent) >= min_len:
-                        sorted_toks = sorted(tokens, key=lambda t: (float(t["top"]), float(t["x0"])))
-                        tok_lines: List[List[Dict[str, Any]]] = []
-                        for t in sorted_toks:
-                            if not tok_lines or abs(float(t["top"]) - float(tok_lines[-1][0]["top"])) > 5.0:
-                                tok_lines.append([t])
-                            else:
-                                tok_lines[-1].append(t)
+                        tok_lines = _group_words_into_visual_lines(tokens)
 
                         line_boxes = []
+                        tok_boxes = []
                         for tl in tok_lines:
                             lx0 = min(float(t["x0"]) for t in tl)
                             ltop = min(float(t["top"]) for t in tl)
                             lx1 = max(float(t["x1"]) for t in tl)
                             lbottom = max(float(t["bottom"]) for t in tl)
-                            line_boxes.append([round(lx0, 1), round(ltop, 1), round(lx1, 1), round(lbottom, 1)])
+                            if lx1 > lx0 and lbottom > ltop:
+                                line_boxes.append([round(lx0, 1), round(ltop, 1), round(lx1, 1), round(lbottom, 1)])
+                            for t in tl:
+                                tx0 = round(float(t["x0"]), 1)
+                                ttop = round(float(t["top"]), 1)
+                                tx1 = round(float(t["x1"]), 1)
+                                tbot = round(float(t["bottom"]), 1)
+                                if tx1 > tx0 and tbot > ttop:
+                                    tok_boxes.append([str(t["text"]), tx0, ttop, tx1, tbot])
+
+                        if not line_boxes:
+                            return
 
                         x0 = min(b[0] for b in line_boxes)
                         top = min(b[1] for b in line_boxes)
@@ -534,6 +580,7 @@ class FastPdfReader:
                             "claim_y_top": round(top, 1),
                             "boxes": line_boxes,
                             "claim_rects": line_boxes,
+                            "tok_boxes": tok_boxes,
                             "is_formula": is_formula
                         })
 
