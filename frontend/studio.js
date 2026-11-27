@@ -216,6 +216,96 @@ async function initStudio() {
     }
 }
 
+const SVG_NS = "http://www.w3.org/2000/svg";
+let pdfResizeObserver = null;
+
+/**
+ * Loads a rendered PDF page image safely without race conditions (C4).
+ * Assigns onload BEFORE src, handles unchanged src when already complete,
+ * and awaits img.decode() when supported.
+ */
+function loadPageImage(img, url, onReady) {
+    if (!img || !url) {
+        if (typeof onReady === "function") onReady();
+        return;
+    }
+
+    let fired = false;
+    const finish = () => {
+        if (fired) return;
+        fired = true;
+        if (typeof onReady === "function") onReady();
+    };
+
+    const prevUrl = img.getAttribute("data-loaded-src");
+    img.style.display = "block";
+
+    // Same URL already loaded and decoded -> redraw immediately (onload will not fire again)
+    if (prevUrl === url && img.complete && img.naturalWidth > 0) {
+        finish();
+        return;
+    }
+
+    img.setAttribute("data-loaded-src", url);
+    img.onload = () => {
+        if (typeof img.decode === "function") {
+            img.decode().then(finish).catch(finish);
+        } else {
+            finish();
+        }
+    };
+    img.onerror = finish;
+    img.src = url;
+
+    // Cache hit that became synchronously complete right after setting src
+    if (img.complete && img.naturalWidth > 0) {
+        if (typeof img.decode === "function") {
+            img.decode().then(finish).catch(finish);
+        } else {
+            finish();
+        }
+    }
+}
+
+function isValidRect(rect) {
+    if (!Array.isArray(rect) || rect.length < 4) return false;
+    const x0 = Number(rect[0]);
+    const y0 = Number(rect[1]);
+    const x1 = Number(rect[2]);
+    const y1 = Number(rect[3]);
+    if (![x0, y0, x1, y1].every(Number.isFinite)) return false;
+    return (x1 - x0) > 0.25 && (y1 - y0) > 0.25;
+}
+
+function resolvePagePointDimensions(pageNum, img) {
+    const pageDims = currentBundle?.page_dimensions?.[pageNum]
+        || currentBundle?.page_dimensions?.[`${pageNum}`];
+    if (Array.isArray(pageDims) && pageDims[0] > 0 && pageDims[1] > 0) {
+        return { widthPt: Number(pageDims[0]), heightPt: Number(pageDims[1]) };
+    }
+
+    // Fallback 1: per-finding explicit page_width_pt / cell_page_width_pt
+    for (const f of (currentBundle?.findings || [])) {
+        if ((f.claim_source?.page || 1) === pageNum && f.page_width_pt > 0 && f.page_height_pt > 0) {
+            return { widthPt: Number(f.page_width_pt), heightPt: Number(f.page_height_pt) };
+        }
+        const evPage = f.cell_page || f.table_evidence?.page;
+        if (evPage === pageNum && f.cell_page_width_pt > 0 && f.cell_page_height_pt > 0) {
+            return { widthPt: Number(f.cell_page_width_pt), heightPt: Number(f.cell_page_height_pt) };
+        }
+    }
+
+    // Fallback 2: natural image pixel dimensions divided by authoritative render_scale (1.5, never 2.0)
+    const renderScale = Number(currentBundle?.render_scale) || 1.5;
+    const naturalW = img?.naturalWidth || 0;
+    const naturalH = img?.naturalHeight || 0;
+    if (naturalW > 0 && naturalH > 0) {
+        return { widthPt: naturalW / renderScale, heightPt: naturalH / renderScale };
+    }
+
+    return { widthPt: 595.28, heightPt: 841.89 };
+}
+
 function displayAuditBundle(bundle, defaultImgUrl = null) {
     currentBundle = bundle;
 
@@ -250,11 +340,9 @@ function displayAuditBundle(bundle, defaultImgUrl = null) {
 
     const img = document.getElementById("pdf-page-img");
     if (img && pageImgUrl) {
-        img.src = pageImgUrl;
-        img.style.display = "block";
-        img.onload = () => {
+        loadPageImage(img, pageImgUrl, () => {
             renderPdfXRayCanvas();
-        };
+        });
     }
 
     // Render findings list
@@ -277,7 +365,7 @@ function updatePageNavControls() {
     if (btnNext) btnNext.disabled = (currentDocPage >= totalDocPages);
 }
 
-function changeDocPage(newPage) {
+function changeDocPage(newPage, onReady = null) {
     if (newPage < 1 || newPage > totalDocPages) return;
     currentDocPage = newPage;
     updatePageNavControls();
@@ -286,209 +374,240 @@ function changeDocPage(newPage) {
     if (img && currentBundle?.page_images) {
         const nextUrl = currentBundle.page_images[`${currentDocPage}`] || currentBundle.page_images[currentDocPage];
         if (nextUrl) {
-            img.src = nextUrl;
-            img.style.display = "block";
-            img.onload = () => {
+            loadPageImage(img, nextUrl, () => {
                 renderPdfXRayCanvas();
-            };
+                if (typeof onReady === "function") onReady();
+            });
             return;
         }
     }
     renderPdfXRayCanvas();
+    if (typeof onReady === "function") onReady();
+}
+
+function createSvgRect(rect, className, titleText, findingId) {
+    const el = document.createElementNS(SVG_NS, "rect");
+    const x = Math.max(0, Number(rect[0]));
+    const y = Math.max(0, Number(rect[1]));
+    const w = Math.max(0.5, Number(rect[2]) - Number(rect[0]));
+    const h = Math.max(0.5, Number(rect[3]) - Number(rect[1]));
+    el.setAttribute("x", x.toFixed(2));
+    el.setAttribute("y", y.toFixed(2));
+    el.setAttribute("width", w.toFixed(2));
+    el.setAttribute("height", h.toFixed(2));
+    el.setAttribute("rx", "1.5");
+    el.setAttribute("ry", "1.5");
+    el.setAttribute("vector-effect", "non-scaling-stroke");
+    el.setAttribute("class", className);
+    el.setAttribute("data-finding-id", findingId);
+
+    if (titleText) {
+        const titleEl = document.createElementNS(SVG_NS, "title");
+        titleEl.textContent = titleText;
+        el.appendChild(titleEl);
+    }
+    el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        selectFinding(findingId);
+    });
+    return el;
 }
 
 function renderPdfXRayCanvas() {
     const img = document.getElementById("pdf-page-img");
-    const overlay = document.getElementById("xray-bounding-box-overlay");
+    const svgOverlay = document.getElementById("xrayOverlaySvg");
+    const gutterLayer = document.getElementById("xray-gutter-layer");
     const svgEvidence = document.getElementById("marginBracketSvg");
-    if (!img || !overlay || !svgEvidence || !currentBundle) return;
+    if (!img || !svgOverlay || !svgEvidence || !currentBundle) return;
 
-    overlay.innerHTML = "";
+    // Clear previous SVG rects and gutter pills
+    svgOverlay.innerHTML = "";
+    if (gutterLayer) gutterLayer.innerHTML = "";
 
-    const pageDims = currentBundle?.page_dimensions?.[currentDocPage] || currentBundle?.page_dimensions?.[`${currentDocPage}`];
-    const cropX = pageDims?.[2] || 0;
-    const cropY = pageDims?.[3] || 0;
-    const naturalW = img.naturalWidth || 0;
-    const naturalH = img.naturalHeight || 0;
-
-    let pdfPageW = 595.28;
-    let pdfPageH = 841.89;
-
-    if (pageDims && pageDims[0] > 0 && pageDims[1] > 0) {
-        pdfPageW = pageDims[0];
-        pdfPageH = pageDims[1];
-    } else if (naturalW > 0 && naturalH > 0) {
-        pdfPageW = naturalW / 2.0;
-        pdfPageH = naturalH / 2.0;
-    }
-
-    const renderedW = img.clientWidth || (naturalW > 0 ? naturalW / 2.0 : 595.0);
-    const renderedH = img.clientHeight || (naturalH > 0 ? naturalH / 2.0 : 842.0);
-
-    const scaleX = renderedW / pdfPageW;
-    const scaleY = renderedH / pdfPageH;
+    // SINGLE POINT OF COMPENSATION:
+    // Backend (pdf_reader.py / table_geometry.py) already subtracts CropBox origin once
+    // and emits all rects in 72-DPI visible page space [0..page_width_pt, 0..page_height_pt].
+    // Frontend MUST NOT subtract cropX/cropY again.
+    const { widthPt: pdfPageW, heightPt: pdfPageH } = resolvePagePointDimensions(currentDocPage, img);
+    svgOverlay.setAttribute("viewBox", `0 0 ${pdfPageW.toFixed(2)} ${pdfPageH.toFixed(2)}`);
 
     const findings = currentBundle.findings || [];
+    // Draw inactive findings first, then active finding on top so highlights stay crisp
+    const orderedFindings = [
+        ...findings.filter(f => f.finding_id !== activeFindingId),
+        ...findings.filter(f => f.finding_id === activeFindingId)
+    ];
 
-    findings.forEach(f => {
+    // Deduplicate overlapping inactive claim rects on the same sentence (C8)
+    const seenInactiveClaimKeys = new Set();
+
+    orderedFindings.forEach(f => {
         const claimPage = f.claim_source?.page || 1;
-        const evidencePage = f.table_evidence?.page || claimPage;
+        const evidencePage = f.cell_page || f.table_evidence?.page || claimPage;
         const isCurrentActive = (f.finding_id === activeFindingId);
+        const meta = getVerdictMeta(f.verdict);
+        const category = meta.category || "fatal";
+        const isFiltered = (currentFilter === "all" || category === currentFilter);
 
-        // 1. Claim Bounding Box (Only on currentDocPage)
-        if (claimPage === currentDocPage) {
-            const rawBoxes = (f.claim_source?.boxes && f.claim_source.boxes.length > 0)
-                ? f.claim_source.boxes
-                : [f.claim_source?.bbox || [31.2, 289.9, 564.1, 316.9]];
-
-            const boxes = rawBoxes.map(b => [
-                Math.max(0, b[0] - cropX),
-                Math.max(0, b[1] - cropY),
-                Math.max(0, b[2] - cropX),
-                Math.max(0, b[3] - cropY)
-            ]);
-
-            const minX = Math.min(...boxes.map(b => b[0])) * scaleX;
-            const minY = Math.min(...boxes.map(b => b[1])) * scaleY;
-            const maxX = Math.max(...boxes.map(b => b[2])) * scaleX;
-            const maxY = Math.max(...boxes.map(b => b[3])) * scaleY;
-            const cw = Math.max(20, maxX - minX);
-            const ch = Math.max(14, maxY - minY);
-
-            const claimBox = document.createElement("div");
-            claimBox.className = `xray-claim-wrapper ${isCurrentActive ? "active" : ""}`;
-            claimBox.id = `bbox-claim-${f.finding_id}`;
-            claimBox.style.left = `${minX}px`;
-            claimBox.style.top = `${minY}px`;
-            claimBox.style.width = `${cw}px`;
-            claimBox.style.height = `${ch}px`;
-
-            // Draw clean tight highlight on each exact text line (No giant enclosing box)
-            boxes.forEach(b => {
-                const seg = document.createElement("div");
-                seg.className = `xray-line-segment ${isCurrentActive ? "active" : ""}`;
-                seg.style.left = `${(b[0] * scaleX) - minX}px`;
-                seg.style.top = `${(b[1] * scaleY) - minY}px`;
-                seg.style.width = `${Math.max(12, (b[2] - b[0]) * scaleX)}px`;
-                seg.style.height = `${Math.max(10, (b[3] - b[1]) * scaleY)}px`;
-                seg.title = `Temuan ${f.finding_id}: Klik untuk melihat analisis`;
-                seg.onclick = (e) => {
-                    e.stopPropagation();
-                    selectFinding(f.finding_id);
-                };
-                claimBox.appendChild(seg);
-            });
-
-            // Smart cross-page indicator pill (Placed strictly inside empty paper margins, never sticks out)
-            if (evidencePage !== claimPage) {
-                const tag = document.createElement("div");
-                const leftSpace = minX;
-                const rightSpace = renderedW - maxX;
-
-                if (leftSpace >= 85) {
-                    tag.className = "claim-gutter-tag-left";
-                } else if (rightSpace >= 85) {
-                    tag.className = "claim-gutter-tag-right";
-                } else {
-                    tag.className = "claim-gutter-tag-inline";
-                }
-
-                tag.innerHTML = `
-                    <button type="button" class="floating-claim-tag" onclick="jumpToEvidencePage(${evidencePage}, '${f.finding_id}', event); return false;" title="Buka Halaman ${evidencePage} untuk melihat tabel bukti">
-                        <span class="severity-dot amber"></span>
-                        <span>Bukti Hal. ${evidencePage}</span>
-                        <svg fill="none" height="11" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24" width="11">
-                            <line x1="7" x2="17" y1="17" y2="7"></line>
-                            <polyline points="7 7 17 7 17 17"></polyline>
-                        </svg>
-                    </button>
-                `;
-                claimBox.appendChild(tag);
-            }
-
-            overlay.appendChild(claimBox);
+        // 1. Normalized Table Bounding Box (table_bbox_norm, nullable per C2)
+        if (
+            f.table_bbox_norm &&
+            f.table_bbox_norm.page === currentDocPage &&
+            Number.isFinite(f.table_bbox_norm.x0) &&
+            Number.isFinite(f.table_bbox_norm.x1) &&
+            f.table_bbox_norm.x1 > f.table_bbox_norm.x0 &&
+            f.table_bbox_norm.y1 > f.table_bbox_norm.y0 &&
+            (isCurrentActive || isFiltered)
+        ) {
+            const tNorm = f.table_bbox_norm;
+            const tableRectPt = [
+                tNorm.x0 * pdfPageW,
+                tNorm.y0 * pdfPageH,
+                tNorm.x1 * pdfPageW,
+                tNorm.y1 * pdfPageH
+            ];
+            const tableEl = createSvgRect(
+                tableRectPt,
+                `xray-table-rect ${isCurrentActive ? "active" : ""}`,
+                `${f.table_ref || "Tabel Rujukan"}: Klik untuk fokus`,
+                f.finding_id
+            );
+            tableEl.id = `svg-table-${f.finding_id}`;
+            svgOverlay.appendChild(tableEl);
         }
 
-            // 2. Table Evidence Cells (Only on currentDocPage)
-            if (evidencePage === currentDocPage && f.table_evidence?.cells) {
-                const meta = getVerdictMeta(f.verdict);
-                const category = meta.category || "fatal";
-                const isFiltered = (currentFilter === "all" || category === currentFilter);
+        // 2. Claim Line Rects & Exact Token Value Rect (Only on currentDocPage)
+        // NO hardcoded fallback box when geometry is missing (C2)
+        if (claimPage === currentDocPage && (isCurrentActive || isFiltered)) {
+            let candidateRects = [];
+            if (Array.isArray(f.claim_rects) && f.claim_rects.length > 0) {
+                candidateRects = f.claim_rects;
+            } else if (Array.isArray(f.claim_source?.boxes) && f.claim_source.boxes.length > 0) {
+                candidateRects = f.claim_source.boxes;
+            } else if (isValidRect(f.claim_source?.bbox)) {
+                candidateRects = [f.claim_source.bbox];
+            }
 
-                f.table_evidence.cells.forEach(cell => {
-                    if (!cell.bbox) return;
-                    const cBbox = [
-                        Math.max(0, cell.bbox[0] - cropX),
-                        Math.max(0, cell.bbox[1] - cropY),
-                        Math.max(0, cell.bbox[2] - cropX),
-                        Math.max(0, cell.bbox[3] - cropY)
-                    ];
-                    const bx = cBbox[0] * scaleX;
-                    const by = cBbox[1] * scaleY;
-                    const bw = (cBbox[2] - cBbox[0]) * scaleX;
-                    const bh = (cBbox[3] - cBbox[1]) * scaleY;
+            const validClaimRects = candidateRects.filter(isValidRect);
+            if (validClaimRects.length > 0) {
+                const claimGroup = document.createElementNS(SVG_NS, "g");
+                claimGroup.id = `svg-claim-${f.finding_id}`;
+                claimGroup.setAttribute("data-finding-id", f.finding_id);
 
-                    const cellBox = document.createElement("div");
-                    cellBox.className = `xray-bbox xray-bbox-evidence ${isCurrentActive ? "active" : ""}`;
-                    cellBox.id = `cell-${f.finding_id}-${cell.row}-${cell.col}`;
-                    cellBox.style.left = `${bx}px`;
-                    cellBox.style.top = `${by}px`;
-                    cellBox.style.width = `${Math.max(16, bw)}px`;
-                    cellBox.style.height = `${Math.max(14, bh)}px`;
-                    cellBox.title = `Bukti Sel Tabel: ${cell.raw_val || cell.num_val}`;
+                validClaimRects.forEach((b, idx) => {
+                    const rectKey = `${Math.round(b[0])}_${Math.round(b[1])}_${Math.round(b[2])}_${Math.round(b[3])}`;
+                    if (!isCurrentActive && seenInactiveClaimKeys.has(rectKey)) {
+                        return;
+                    }
+                    if (!isCurrentActive) {
+                        seenInactiveClaimKeys.add(rectKey);
+                    }
+                    const seg = createSvgRect(
+                        b,
+                        `xray-claim-rect ${isCurrentActive ? "active" : ""}`,
+                        `Temuan ${f.finding_id}: Klik untuk melihat analisis`,
+                        f.finding_id
+                    );
+                    if (idx === 0) seg.id = `svg-claim-line0-${f.finding_id}`;
+                    claimGroup.appendChild(seg);
+                });
 
-                    if (isCurrentActive) {
-                        const activeColor = category === "warning" ? "#D97706" : (category === "consistent" ? "#10B981" : "#E11D48");
-                        const activeBg = category === "warning" ? "rgba(217, 119, 6, 0.15)" : (category === "consistent" ? "rgba(16, 185, 129, 0.15)" : "rgba(225, 29, 72, 0.15)");
-                        cellBox.style.border = `2.5px solid ${activeColor}`;
-                        cellBox.style.backgroundColor = activeBg;
-                        cellBox.style.zIndex = "30";
-                        cellBox.style.opacity = "1";
-                    } else if (isFiltered) {
-                        cellBox.style.border = "1px dashed rgba(100, 116, 139, 0.35)";
-                        cellBox.style.backgroundColor = "transparent";
-                        cellBox.style.opacity = "0.15";
-                        cellBox.style.zIndex = "10";
+                // Exact numeric token highlight (value_rect) on top of the line rect
+                const valRect = f.claim_source?.value_rect;
+                if (isValidRect(valRect) && isCurrentActive) {
+                    const valEl = createSvgRect(
+                        valRect,
+                        `xray-value-rect active cat-${category}`,
+                        `Nilai klaim: ${f.claim_value_display || ""}`,
+                        f.finding_id
+                    );
+                    valEl.id = `svg-value-${f.finding_id}`;
+                    claimGroup.appendChild(valEl);
+                }
+
+                svgOverlay.appendChild(claimGroup);
+
+                // Smart cross-page indicator pill placed strictly in margin gutter layer
+                if (gutterLayer && evidencePage !== claimPage && isCurrentActive) {
+                    const minX = Math.min(...validClaimRects.map(b => b[0]));
+                    const minY = Math.min(...validClaimRects.map(b => b[1]));
+                    const maxX = Math.max(...validClaimRects.map(b => b[2]));
+                    const leftSpacePt = minX;
+                    const rightSpacePt = pdfPageW - maxX;
+
+                    const tagWrap = document.createElement("div");
+                    tagWrap.style.position = "absolute";
+                    tagWrap.style.top = `${(minY / pdfPageH) * 100}%`;
+                    tagWrap.style.pointerEvents = "auto";
+                    if (leftSpacePt >= 75) {
+                        tagWrap.style.right = `${((pdfPageW - minX) / pdfPageW) * 100}%`;
+                        tagWrap.style.marginRight = "8px";
+                    } else if (rightSpacePt >= 75) {
+                        tagWrap.style.left = `${(maxX / pdfPageW) * 100}%`;
+                        tagWrap.style.marginLeft = "8px";
                     } else {
-                        cellBox.style.display = "none";
+                        tagWrap.style.right = `${Math.max(0, ((pdfPageW - maxX) / pdfPageW) * 100)}%`;
+                        tagWrap.style.transform = "translateY(-110%)";
                     }
 
-                    cellBox.onclick = (e) => {
-                        e.stopPropagation();
-                        selectFinding(f.finding_id);
-                    };
-                    overlay.appendChild(cellBox);
-                });
+                    tagWrap.innerHTML = `
+                        <button type="button" class="floating-claim-tag" onclick="jumpToEvidencePage(${evidencePage}, '${f.finding_id}', event); return false;" title="Buka Halaman ${evidencePage} untuk melihat tabel bukti">
+                            <span class="severity-dot amber"></span>
+                            <span>Bukti Hal. ${evidencePage}</span>
+                            <svg fill="none" height="11" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24" width="11">
+                                <line x1="7" x2="17" y1="17" y2="7"></line>
+                                <polyline points="7 7 17 7 17 17"></polyline>
+                            </svg>
+                        </button>
+                    `;
+                    gutterLayer.appendChild(tagWrap);
+                }
             }
+        }
 
-            // 3. Normalized Table Bounding Box (table_bbox_norm)
-            if (f.table_bbox_norm && f.table_bbox_norm.page === currentDocPage) {
-                const tNorm = f.table_bbox_norm;
-                const tLeft = tNorm.x0 * renderedW;
-                const tTop = tNorm.y0 * renderedH;
-                const tWidth = (tNorm.x1 - tNorm.x0) * renderedW;
-                const tHeight = (tNorm.y1 - tNorm.y0) * renderedH;
+        // 3. Table Evidence Cells (Only on currentDocPage)
+        // Strictly skip null / [0,0,0,0] rects; dashed outline when bbox_approx === true
+        if (evidencePage === currentDocPage && (isCurrentActive || isFiltered)) {
+            const cells = Array.isArray(f.table_evidence?.cells) ? f.table_evidence.cells : [];
+            let drawnCells = 0;
 
-                const tableBox = document.createElement("div");
-                tableBox.className = `xray-bbox xray-bbox-table ${isCurrentActive ? "active" : ""}`;
-                tableBox.id = `table-box-${f.finding_id}`;
-                tableBox.style.left = `${tLeft}px`;
-                tableBox.style.top = `${tTop}px`;
-                tableBox.style.width = `${Math.max(40, tWidth)}px`;
-                tableBox.style.height = `${Math.max(25, tHeight)}px`;
-                tableBox.style.position = "absolute";
-                tableBox.style.border = isCurrentActive ? "2px solid #0075de" : "1.5px dashed rgba(0, 117, 222, 0.4)";
-                tableBox.style.backgroundColor = isCurrentActive ? "rgba(0, 117, 222, 0.08)" : "transparent";
-                tableBox.style.borderRadius = "4px";
-                tableBox.style.pointerEvents = "auto";
-                tableBox.style.cursor = "pointer";
-                tableBox.title = `${f.table_ref || 'Tabel Rujukan'}: Klik untuk fokus`;
-                tableBox.onclick = (e) => {
-                    e.stopPropagation();
-                    selectFinding(f.finding_id);
-                };
-                overlay.appendChild(tableBox);
+            cells.forEach((cell, idx) => {
+                const rawRect = isValidRect(cell.cell_rect)
+                    ? cell.cell_rect
+                    : (isValidRect(cell.bbox) ? cell.bbox : null);
+                if (!rawRect) return;
+
+                const isApprox = Boolean(cell.bbox_approx);
+                const approxCls = isApprox ? "approx" : "";
+                const activeCls = isCurrentActive ? `active cat-${category}` : "";
+                const labelVal = cell.raw_val ?? cell.num_val ?? "";
+                const titleStr = isApprox
+                    ? `Bukti Sel Tabel (perkiraan): ${labelVal}`
+                    : `Bukti Sel Tabel: ${labelVal}`;
+
+                const cellEl = createSvgRect(
+                    rawRect,
+                    `xray-cell-rect ${activeCls} ${approxCls}`.trim(),
+                    titleStr,
+                    f.finding_id
+                );
+                cellEl.id = `svg-cell-${f.finding_id}-${idx}`;
+                svgOverlay.appendChild(cellEl);
+                drawnCells += 1;
+            });
+
+            // Fallback to top-level finding.cell_rect if cells array had no valid rects
+            if (drawnCells === 0 && isValidRect(f.cell_rect)) {
+                const cellEl = createSvgRect(
+                    f.cell_rect,
+                    `xray-cell-rect ${isCurrentActive ? `active cat-${category}` : ""}`.trim(),
+                    `Bukti Sel Tabel: ${f.table_value_display || ""}`,
+                    f.finding_id
+                );
+                cellEl.id = `svg-cell-${f.finding_id}-0`;
+                svgOverlay.appendChild(cellEl);
             }
+        }
     });
 
     updateBracket();
@@ -500,18 +619,21 @@ function updateBracket() {
     if (!bracketPath || !activeFindingId || !currentBundle) return;
 
     const finding = (currentBundle.findings || []).find(f => f.finding_id === activeFindingId);
-    if (!finding) return;
+    if (!finding) {
+        bracketPath.setAttribute("d", "M 0 0");
+        return;
+    }
 
     const claimPage = finding.claim_source?.page || 1;
-    const evidencePage = finding.table_evidence?.page || claimPage;
+    const evidencePage = finding.cell_page || finding.table_evidence?.page || claimPage;
 
     if (claimPage !== currentDocPage || evidencePage !== currentDocPage) {
         bracketPath.setAttribute("d", "M 0 0");
         return;
     }
 
-    const claimEl = document.getElementById(`bbox-claim-${activeFindingId}`);
-    const cellEl = document.querySelector(`.xray-bbox-evidence[id^="cell-${activeFindingId}"]`);
+    const claimEl = document.getElementById(`svg-claim-${activeFindingId}`);
+    const cellEl = document.querySelector(`.xray-cell-rect[data-finding-id="${activeFindingId}"]`);
 
     if (!claimEl || !cellEl) {
         bracketPath.setAttribute("d", "M 0 0");
@@ -524,6 +646,10 @@ function updateBracket() {
     const cRect = pageContainer.getBoundingClientRect();
     const clRect = claimEl.getBoundingClientRect();
     const ceRect = cellEl.getBoundingClientRect();
+    if (clRect.width === 0 || ceRect.width === 0) {
+        bracketPath.setAttribute("d", "M 0 0");
+        return;
+    }
 
     const startY = (clRect.top + clRect.height / 2 - cRect.top) / zoomLevel;
     const endY = (ceRect.top + ceRect.height / 2 - cRect.top) / zoomLevel;
@@ -833,44 +959,25 @@ function jumpToEvidencePage(targetPage, findingId, event) {
         }
     });
 
-    if (currentDocPage === targetPage) {
-        renderPdfXRayCanvas();
+    const flashCell = () => {
         setTimeout(() => {
-            const cell = document.querySelector(`.xray-bbox-evidence[id^="cell-${findingId}"]`);
+            const cell = document.querySelector(`.xray-cell-rect[data-finding-id="${findingId}"]`);
             if (cell) {
                 cell.classList.remove("flash-highlight");
-                void cell.offsetWidth;
+                void cell.getBoundingClientRect();
                 cell.classList.add("flash-highlight");
                 cell.scrollIntoView({ behavior: "smooth", block: "center" });
             }
         }, 80);
+    };
+
+    if (currentDocPage === targetPage) {
+        renderPdfXRayCanvas();
+        flashCell();
         return;
     }
 
-    currentDocPage = targetPage;
-    updatePageNavControls();
-
-    const img = document.getElementById("pdf-page-img");
-    if (img && currentBundle && currentBundle.page_images) {
-        const nextUrl = currentBundle.page_images[`${targetPage}`] || currentBundle.page_images[targetPage];
-        if (nextUrl) {
-            img.onload = () => {
-                renderPdfXRayCanvas();
-                setTimeout(() => {
-                    const cell = document.querySelector(`.xray-bbox-evidence[id^="cell-${findingId}"]`);
-                    if (cell) {
-                        cell.classList.remove("flash-highlight");
-                        void cell.offsetWidth;
-                        cell.classList.add("flash-highlight");
-                        cell.scrollIntoView({ behavior: "smooth", block: "center" });
-                    }
-                }, 100);
-            };
-            img.src = nextUrl;
-            return;
-        }
-    }
-    renderPdfXRayCanvas();
+    changeDocPage(targetPage, flashCell);
 }
 
 function jumpToClaimPage(claimPage, findingId, event) {
@@ -894,14 +1001,14 @@ function jumpToClaimPage(claimPage, findingId, event) {
         }
     });
 
-    changeDocPage(claimPage);
-
-    setTimeout(() => {
-        const seg = document.querySelector(`.xray-line-segment.active`);
-        if (seg) {
-            seg.scrollIntoView({ behavior: "smooth", block: "center" });
-        }
-    }, 250);
+    changeDocPage(claimPage, () => {
+        setTimeout(() => {
+            const seg = document.querySelector(`.xray-value-rect.active, .xray-claim-rect.active`);
+            if (seg) {
+                seg.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+        }, 80);
+    });
 }
 
 function updateCrossPageBanner() {
@@ -956,6 +1063,7 @@ function setStudioFilter(filter) {
         t.classList.toggle("active", t.getAttribute("data-filter") === filter);
     });
     filterStudioCards();
+    renderPdfXRayCanvas();
 }
 
 function filterStudioCards() {
@@ -1038,8 +1146,20 @@ function setupStudioEventListeners() {
     if (btnNext) btnNext.onclick = () => changeDocPage(currentDocPage + 1);
 
     window.addEventListener("resize", () => {
-        renderPdfXRayCanvas();
+        updateBracket();
     });
+
+    // Responsive ResizeObserver sync for SVG overlay & margin bracket connector
+    if (typeof ResizeObserver !== "undefined") {
+        const imgEl = document.getElementById("pdf-page-img");
+        const pageCont = document.getElementById("pageContainer");
+        if (pdfResizeObserver) pdfResizeObserver.disconnect();
+        pdfResizeObserver = new ResizeObserver(() => {
+            updateBracket();
+        });
+        if (imgEl) pdfResizeObserver.observe(imgEl);
+        if (pageCont) pdfResizeObserver.observe(pageCont);
+    }
 }
 
 // PDF Upload & Drag-and-Drop

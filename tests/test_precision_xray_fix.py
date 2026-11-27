@@ -792,5 +792,52 @@ def test_audit_api_response_schema_has_new_and_legacy_fields():
         assert "bbox_approx" in cell
 
 
+# =====================================================================
+# Step 3: Frontend Sub-Pixel SVG X-Ray Overlay Contract
+# =====================================================================
+
+def test_frontend_svg_overlay_and_coordinate_invariants():
+    """
+    Step 3: Verifies studio.html, studio.js, and styles.css implement the SVG viewBox
+    overlay, remove hardcoded fallback rects and double CropBox subtraction, fix C3/C4,
+    and support value_rect, bbox_approx, and ResizeObserver.
+    """
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(root, "frontend", "studio.html"), "r", encoding="utf-8") as f:
+        html = f.read()
+    with open(os.path.join(root, "frontend", "studio.js"), "r", encoding="utf-8") as f:
+        js = f.read()
+    with open(os.path.join(root, "frontend", "styles.css"), "r", encoding="utf-8") as f:
+        css = f.read()
+
+    # HTML: shrink-wrapped container + SVG overlay
+    assert 'id="xrayOverlaySvg"' in html
+    assert 'preserveAspectRatio="none"' in html
+    assert "display: inline-block;" in html
+
+    # JS: zero hardcoded fake fallback boxes (C2) & zero double CropBox subtraction (2.1)
+    assert "31.2, 289.9, 564.1, 316.9" not in js
+    assert "- cropX" not in js and "- cropY" not in js
+    # JS: no / 2.0 scale mismatch (C3)
+    assert "naturalW / 2.0" not in js and "naturalH / 2.0" not in js
+    assert "render_scale" in js
+    # JS: SVG viewBox + non-scaling-stroke + value_rect + bbox_approx + ResizeObserver
+    assert 'setAttribute("viewBox"' in js
+    assert "non-scaling-stroke" in js
+    assert "value_rect" in js
+    assert "bbox_approx" in js
+    assert "ResizeObserver" in js
+    # C4: img.onload assigned BEFORE img.src in loadPageImage
+    onload_pos = js.find("img.onload =")
+    src_pos = js.find("img.src = url")
+    assert onload_pos != -1 and src_pos != -1 and onload_pos < src_pos
+
+    # CSS: SVG overlay & approx dashed styling present
+    assert ".xray-overlay" in css
+    assert "non-scaling-stroke" in css
+    assert ".xray-cell-rect.approx" in css
+
+
+
 
 

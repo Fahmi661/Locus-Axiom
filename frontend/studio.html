@@ -658,9 +658,11 @@
   }
 
   .pdf-page-container {
-    display: flex;
-    flex-direction: column;
+    display: inline-block;
     position: relative;
+    line-height: 0;
+    padding: 0;
+    border: 0;
     background: #ffffff;
     box-shadow: 0 1px 2px rgba(0,0,0,0.06), 0 12px 32px rgba(0,0,0,0.10);
     border-radius: 2px;
@@ -674,72 +676,109 @@
     user-select: none;
   }
 
-  /* Bounding Box Precision X-Ray Layers */
-  .xray-bounding-box-overlay {
+  /* Sub-Pixel SVG Precision X-Ray Layer (viewBox = 0 0 page_width_pt page_height_pt) */
+  .xray-overlay {
     position: absolute;
+    inset: 0;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
     pointer-events: none;
-  }
-
-  .xray-bbox {
-    position: absolute;
-    pointer-events: auto;
-    cursor: pointer;
-    border-radius: 3px;
-    transition: all 120ms ease;
-    z-index: 10;
-  }
-
-  /* Claim Wrapper is strictly an invisible positioning container (Zero giant boxes) */
-  .xray-claim-wrapper {
-    position: absolute;
-    pointer-events: none;
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    z-index: 10;
-  }
-
-  /* Table Evidence Cell Highlight (Zero obstruction, crisp 100% visible numbers) */
-  .xray-bbox-evidence {
-    background-color: rgba(47, 79, 216, 0.08);
-    border: 2px solid var(--accent);
-    border-radius: 2px;
-    box-shadow: none !important;
-  }
-
-  .xray-bbox-evidence.active {
-    background-color: rgba(47, 79, 216, 0.12);
-    border: 2px solid var(--accent);
-    box-shadow: none !important;
-    z-index: 25;
-  }
-
-  /* Text-Only Line Segment Highlights (Follows exact sentence lines cleanly) */
-  .xray-line-segment {
-    position: absolute;
-    pointer-events: auto;
-    cursor: pointer;
-    background-color: rgba(225, 29, 72, 0.08);
-    border-bottom: 2px solid rgba(225, 29, 72, 0.45);
-    border-radius: 2px;
-    transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+    overflow: visible;
     z-index: 15;
   }
-  .xray-line-segment:hover {
-    background-color: rgba(225, 29, 72, 0.16);
-    border-bottom-color: var(--error);
+
+  .xray-gutter-layer {
+    position: absolute;
+    inset: 0;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 30;
   }
-  .xray-line-segment.active {
-    background-color: rgba(225, 29, 72, 0.20);
-    border: 1px solid rgba(225, 29, 72, 0.75);
-    border-bottom: 2.5px solid var(--error);
-    border-radius: 2px;
-    box-shadow: 0 1px 3px rgba(225, 29, 72, 0.2);
-    z-index: 20;
+
+  .xray-overlay rect {
+    vector-effect: non-scaling-stroke;
+    pointer-events: auto;
+    cursor: pointer;
+    transition: fill-opacity 120ms ease, stroke-opacity 120ms ease;
+  }
+
+  .xray-claim-rect {
+    fill: rgba(225, 29, 72, 0.08);
+    stroke: rgba(225, 29, 72, 0.45);
+    stroke-width: 1px;
+  }
+  .xray-claim-rect:hover {
+    fill: rgba(225, 29, 72, 0.16);
+    stroke: #E11D48;
+  }
+  .xray-claim-rect.active {
+    fill: rgba(225, 29, 72, 0.14);
+    stroke: #E11D48;
+    stroke-width: 1.5px;
+  }
+
+  .xray-value-rect {
+    fill: rgba(225, 29, 72, 0.24);
+    stroke: #E11D48;
+    stroke-width: 2px;
+  }
+  .xray-value-rect.cat-warning {
+    fill: rgba(217, 119, 6, 0.22);
+    stroke: #D97706;
+  }
+  .xray-value-rect.cat-consistent {
+    fill: rgba(16, 185, 129, 0.20);
+    stroke: #10B981;
+  }
+
+  .xray-cell-rect {
+    fill: transparent;
+    stroke: rgba(100, 116, 139, 0.35);
+    stroke-width: 1px;
+    stroke-dasharray: 3 2;
+  }
+  .xray-cell-rect.active {
+    fill: rgba(225, 29, 72, 0.14);
+    stroke: #E11D48;
+    stroke-width: 2px;
+    stroke-dasharray: none;
+  }
+  .xray-cell-rect.active.cat-warning {
+    fill: rgba(217, 119, 6, 0.14);
+    stroke: #D97706;
+  }
+  .xray-cell-rect.active.cat-consistent {
+    fill: rgba(16, 185, 129, 0.14);
+    stroke: #10B981;
+  }
+  .xray-cell-rect.approx {
+    stroke-dasharray: 4 3;
+  }
+
+  .xray-table-rect {
+    fill: transparent;
+    stroke: rgba(0, 117, 222, 0.35);
+    stroke-width: 1.25px;
+    stroke-dasharray: 4 3;
+  }
+  .xray-table-rect.active {
+    fill: rgba(0, 117, 222, 0.05);
+    stroke: #0075de;
+    stroke-width: 1.75px;
+    stroke-dasharray: none;
+  }
+
+  @keyframes svgFlashPulse {
+    0% { fill-opacity: 0.55; stroke-width: 3.5px; }
+    100% { fill-opacity: 0.16; stroke-width: 2px; }
+  }
+  .xray-overlay rect.flash-highlight {
+    animation: svgFlashPulse 1.1s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   /* Gutter Pill: Placed strictly inside EMPTY MARGINS (Zero text obstruction, 100% inside white sheet) */
@@ -1429,8 +1468,10 @@
       <!-- Dynamic Rendered PDF Page Image -->
       <img id="pdf-page-img" class="pdf-sheet" alt="Halaman Dokumen Ilmiah" style="display: none;">
       
-      <!-- Bounding Box Precision Overlay -->
-      <div id="xray-bounding-box-overlay" class="xray-bounding-box-overlay"></div>
+      <!-- Sub-Pixel SVG Bounding Box Precision Overlay -->
+      <svg id="xrayOverlaySvg" class="xray-overlay" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg"></svg>
+      <!-- Gutter Pill Layer (HTML buttons for cross-page navigation) -->
+      <div id="xray-gutter-layer" class="xray-gutter-layer"></div>
       
       <!-- Margin Bracket SVG across page -->
       <svg class="margin-bracket-svg" id="marginBracketSvg" xmlns="http://www.w3.org/2000/svg">
