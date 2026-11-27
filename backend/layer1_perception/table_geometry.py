@@ -779,7 +779,9 @@ class TableGeometryExtractor:
                                                 "col_idx": c_idx,
                                                 "text": cell,
                                                 "raw_val": cell,
-                                                "bbox": [0, 0, 0, 0]
+                                                "bbox": None,
+                                                "cell_rect": None,
+                                                "bbox_approx": True
                                             }
                                 merged_rows.append(r)
 

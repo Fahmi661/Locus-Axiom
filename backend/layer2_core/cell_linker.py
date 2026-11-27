@@ -83,26 +83,37 @@ def build_table_ref(tbl: Optional[Dict[str, Any]]) -> str:
 
 
 def build_table_bbox_norm(tbl: Optional[Dict[str, Any]], page_dims: Optional[Dict[Any, Any]]) -> Optional[Dict[str, float]]:
-    """Calculates normalized (0..1) bounding box offset with cropbox compensation."""
+    """
+    Calculates normalized (0..1) bounding box in the visible page frame.
+    Returns None whenever table bbox or page dimensions are missing/invalid (never invents fake boxes).
+    Note: CropBox origin compensation is applied ONCE in FastPdfReader.process_pdf;
+    coordinates arriving here are already in [0..page_width_pt] x [0..page_height_pt].
+    """
     if not tbl:
         return None
     page = int(tbl.get("page", 1))
-    bbox = tbl.get("bbox", [])
-    if len(bbox) < 4:
+    bbox = tbl.get("bbox")
+    if not bbox or len(bbox) < 4:
         return None
     dim = None
     if page_dims:
         dim = page_dims.get(page) or page_dims.get(str(page))
     if not dim or len(dim) < 2:
-        return {"page": page, "x0": 0.05, "y0": 0.1, "x1": 0.95, "y1": 0.4}
-    p_w = float(dim[0]) if dim[0] > 0 else 595.0
-    p_h = float(dim[1]) if dim[1] > 0 else 842.0
-    crop_x = float(dim[2]) if len(dim) >= 3 else 0.0
-    crop_y = float(dim[3]) if len(dim) >= 4 else 0.0
-    x0 = max(0.0, min(1.0, (bbox[0] - crop_x) / p_w))
-    y0 = max(0.0, min(1.0, (bbox[1] - crop_y) / p_h))
-    x1 = max(0.0, min(1.0, (bbox[2] - crop_x) / p_w))
-    y1 = max(0.0, min(1.0, (bbox[3] - crop_y) / p_h))
+        return None
+    try:
+        p_w = float(dim[0])
+        p_h = float(dim[1])
+        bx0, by0, bx1, by1 = float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])
+    except (TypeError, ValueError):
+        return None
+    if p_w <= 0 or p_h <= 0 or bx1 <= bx0 or by1 <= by0:
+        return None
+    x0 = max(0.0, min(1.0, bx0 / p_w))
+    y0 = max(0.0, min(1.0, by0 / p_h))
+    x1 = max(0.0, min(1.0, bx1 / p_w))
+    y1 = max(0.0, min(1.0, by1 / p_h))
+    if x1 <= x0 or y1 <= y0:
+        return None
     return {
         "page": page,
         "x0": round(x0, 4),
@@ -775,7 +786,7 @@ class CellLinker:
                 "claim_source": {
                     "page": claim_page,
                     "text": claim_text,
-                    "bbox": claim.get("bbox", [72, 100, 500, 120]),
+                    "bbox": claim.get("bbox"),
                     "boxes": claim.get("boxes", [])
                 },
                 "table_evidence": {
@@ -848,7 +859,7 @@ class CellLinker:
                         "claim_source": {
                             "page": claim_page,
                             "text": claim_text,
-                            "bbox": claim.get("bbox", [72, 100, 500, 120]),
+                            "bbox": claim.get("bbox"),
                             "boxes": claim.get("boxes", [])
                         },
                         "table_evidence": {
@@ -914,7 +925,7 @@ class CellLinker:
                             "claim_source": {
                                 "page": claim_page,
                                 "text": claim_text,
-                                "bbox": claim.get("bbox", [72, 100, 500, 120]),
+                                "bbox": claim.get("bbox"),
                                 "boxes": claim.get("boxes", [])
                             },
                             "table_evidence": {
@@ -1020,7 +1031,7 @@ class CellLinker:
                                         "claim_source": {
                                             "page": claim_page,
                                             "text": claim_text,
-                                            "bbox": claim.get("bbox", [72, 100, 500, 120]),
+                                            "bbox": claim.get("bbox"),
                                             "boxes": claim.get("boxes", [])
                                         },
                                         "table_evidence": {
@@ -1108,7 +1119,7 @@ class CellLinker:
                         "claim_source": {
                             "page": claim_page,
                             "text": claim_text,
-                            "bbox": claim.get("bbox", [72, 100, 500, 120]),
+                            "bbox": claim.get("bbox"),
                             "boxes": claim.get("boxes", [])
                         },
                         "table_evidence": {
@@ -1256,7 +1267,7 @@ class CellLinker:
                     "claim_source": {
                         "page": claim_page,
                         "text": claim_text,
-                        "bbox": claim.get("bbox", [72, 100, 500, 120]),
+                        "bbox": claim.get("bbox"),
                         "boxes": claim.get("boxes", [])
                     },
                     "table_evidence": {
@@ -1321,7 +1332,7 @@ class CellLinker:
             actual_id = ref_typo_info.get("actual_id", "")
             if not str(actual_id).startswith("Tabel_"):
                 t_ref_typo = build_table_ref(act_tbl) if act_tbl else f"Tabel {actual_id}"
-                t_bbox_typo = build_table_bbox_norm(act_tbl, page_dims) if act_tbl else [72, 100, 500, 200]
+                t_bbox_typo = build_table_bbox_norm(act_tbl, page_dims) if act_tbl else None
                 f_typo = {
                     "finding_id": f"F-{claim.get('claim_id', 'C')}-REF-TYPO",
                     "verdict": "TABLE_REFERENCE_TYPO",
@@ -1334,7 +1345,7 @@ class CellLinker:
                     "claim_source": {
                         "page": claim_page,
                         "text": claim_text,
-                        "bbox": claim.get("bbox", [72, 100, 500, 120]),
+                        "bbox": claim.get("bbox"),
                         "boxes": claim.get("boxes", [])
                     },
                     "table_evidence": {
@@ -1432,7 +1443,7 @@ class CellLinker:
                             "claim_source": {
                                 "page": claim_page,
                                 "text": claim_text,
-                                "bbox": claim.get("bbox", [72, 100, 500, 120]),
+                                "bbox": claim.get("bbox"),
                                 "boxes": claim.get("boxes", [])
                             },
                             "table_evidence": {
@@ -1569,7 +1580,7 @@ class CellLinker:
                                         "claim_source": {
                                             "page": claim_page,
                                             "text": claim_text,
-                                            "bbox": claim.get("bbox", [72, 100, 500, 120]),
+                                            "bbox": claim.get("bbox"),
                                             "boxes": claim.get("boxes", [])
                                         },
                                         "table_evidence": {
@@ -1651,7 +1662,7 @@ class CellLinker:
                                     "claim_source": {
                                         "page": claim_page,
                                         "text": claim_text,
-                                        "bbox": claim.get("bbox", [72, 100, 500, 120]),
+                                        "bbox": claim.get("bbox"),
                                         "boxes": claim.get("boxes", [])
                                     },
                                     "table_evidence": {
@@ -2175,7 +2186,7 @@ class CellLinker:
                                 "claim_source": {
                                     "page": claim_page,
                                     "text": claim_text,
-                                    "bbox": claim.get("bbox", [72, 100, 500, 120]),
+                                    "bbox": claim.get("bbox"),
                                     "boxes": claim.get("boxes", [])
                                 },
                                 "table_evidence": {
@@ -2291,7 +2302,7 @@ class CellLinker:
                                                     "claim_source": {
                                                         "page": claim_page,
                                                         "text": claim_text,
-                                                        "bbox": claim.get("bbox", [72, 100, 500, 120]),
+                                                        "bbox": claim.get("bbox"),
                                                         "boxes": claim.get("boxes", [])
                                                     },
                                                     "table_evidence": {
@@ -2382,7 +2393,7 @@ class CellLinker:
                                     "claim_source": {
                                         "page": claim_page,
                                         "text": claim_text,
-                                        "bbox": claim.get("bbox", [72, 100, 500, 120]),
+                                        "bbox": claim.get("bbox"),
                                         "boxes": claim.get("boxes", [])
                                     },
                                     "table_evidence": {
@@ -2506,7 +2517,7 @@ class CellLinker:
                     "claim_source": {
                         "page": claim_page,
                         "text": claim_text,
-                        "bbox": claim.get("bbox", [72, 100, 500, 120]),
+                        "bbox": claim.get("bbox"),
                         "boxes": claim.get("boxes", [])
                     },
                     "table_evidence": {
@@ -2606,7 +2617,7 @@ class CellLinker:
                                             "claim_source": {
                                                 "page": claim_page,
                                                 "text": claim_text,
-                                                "bbox": claim.get("bbox", [72, 100, 500, 120]),
+                                                "bbox": claim.get("bbox"),
                                                 "boxes": claim.get("boxes", [])
                                             },
                                             "table_evidence": {
@@ -2871,12 +2882,9 @@ class CellLinker:
                     f"Periksa kembali baris '{f['row_category']}' pada {f['table_ref']}.",
                     f"Bandingkan angka teks ({f['claim_value_display']}) dengan data tabel ({f['table_value_display']})."
                 ]
-            if not f.get("table_bbox_norm"):
-                t_page = f.get("table_evidence", {}).get("page", 1)
+            if "table_bbox_norm" not in f or f.get("table_bbox_norm") is None:
                 matched_tbl = next((t for t in tables if str(t.get("table_id")) == str(f.get("table_evidence", {}).get("table_id"))), None)
-                f["table_bbox_norm"] = build_table_bbox_norm(matched_tbl, page_dims) or {
-                    "page": int(t_page), "x0": 0.05, "y0": 0.1, "x1": 0.95, "y1": 0.4
-                }
+                f["table_bbox_norm"] = build_table_bbox_norm(matched_tbl, page_dims)
 
         # Deduplikasi temuan yang identik agar UI demo tidak menampilkan kartu berulang
         unique_findings = []
@@ -2907,5 +2915,6 @@ class CellLinker:
             "findings": all_findings,
             "tables": tables,
             "page_images": doc_graph.get("page_images", {}),
-            "page_dimensions": doc_graph.get("page_dimensions", {})
+            "page_dimensions": doc_graph.get("page_dimensions", {}),
+            "render_scale": doc_graph.get("render_scale", 1.5)
         }

@@ -100,10 +100,25 @@ class OcrTableFallback:
         return cls._ocr_engine, cls._table_engine
 
     @staticmethod
+    def _sanitize_bbox(bbox: Any) -> Optional[List[float]]:
+        """Validates a 4-number bbox with positive area; returns None instead of [0, 0, 0, 0]."""
+        if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
+            return None
+        try:
+            x0, y0, x1, y1 = float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])
+        except (TypeError, ValueError):
+            return None
+        if not all(np.isfinite(v) for v in (x0, y0, x1, y1)):
+            return None
+        if x1 <= x0 or y1 <= y0:
+            return None
+        return [x0, y0, x1, y1]
+
+    @staticmethod
     def normalize_cells(rows: List[Any]) -> List[List[Dict[str, Any]]]:
         """
         Normalizes any list of rows into a uniform List[List[Dict]] where each cell has:
-        {"row": r_idx + 1, "col": c_idx + 1, "row_idx": r_idx, "col_idx": c_idx, "text": text, "raw_val": text, "bbox": bbox}
+        {"row": r_idx + 1, "col": c_idx + 1, "row_idx": r_idx, "col_idx": c_idx, "text": text, "raw_val": text, "bbox": bbox_or_None}
         """
         if not rows:
             return []
@@ -114,12 +129,12 @@ class OcrTableFallback:
             s_row = []
             for c_idx, cell in enumerate(row):
                 c_text = ""
-                c_bbox = [0, 0, 0, 0]
+                c_bbox: Optional[List[float]] = None
                 if isinstance(cell, str):
                     c_text = cell
                 elif isinstance(cell, dict):
                     c_text = cell.get("text") or cell.get("raw_val") or ""
-                    c_bbox = cell.get("bbox", [0, 0, 0, 0])
+                    c_bbox = OcrTableFallback._sanitize_bbox(cell.get("bbox"))
                 else:
                     c_text = str(cell)
 

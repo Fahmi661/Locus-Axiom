@@ -7,16 +7,156 @@ Zero-AGPL compliant.
 import os
 import io
 import re
-from typing import Dict, Any, List, Optional
+import math
+from typing import Dict, Any, List, Optional, Tuple
 import pypdfium2 as pdfium
 import pdfplumber
 from PIL import Image
 from backend.layer1_perception.table_geometry import TableGeometryExtractor
 
+# Single source of truth for pypdfium2 page rendering scale (72-DPI PDF pt -> PNG px).
+# Shared by renderer, OCR pixel-to-point conversion, and exposed to frontend as `render_scale`.
+RENDER_SCALE: float = 1.5
+
+
+def get_visible_page_frame(page) -> Tuple[float, float, float, float]:
+    """
+    Computes (crop_x0, crop_y0, vis_w, vis_h) in pdfplumber's rotated top-down coordinate space
+    so pdfplumber coordinates map 1:1 onto the visible CropBox rendered by pypdfium2.
+
+    SINGLE POINT OF COMPENSATION:
+    Backend subtracts (crop_x0, crop_y0) ONCE here in FastPdfReader.process_pdf.
+    All downstream tables, cells, claims, and frontend SVG overlays operate directly
+    in normalized [0..vis_w] x [0..vis_h] 72-DPI PDF points and MUST NOT subtract
+    cropbox offsets a second time.
+    """
+    page_obj = getattr(page, "page_obj", None)
+    raw_mb = getattr(page_obj, "mediabox", None) if page_obj is not None else None
+    raw_cb = getattr(page_obj, "cropbox", None) if page_obj is not None else None
+
+    if raw_mb is None:
+        raw_mb = getattr(page, "mediabox", None)
+    if raw_cb is None:
+        raw_cb = getattr(page, "cropbox", None) or raw_mb
+
+    p_bbox = getattr(page, "bbox", (0.0, 0.0, float(page.width), float(page.height)))
+    bx0 = float(p_bbox[0]) if len(p_bbox) >= 4 else 0.0
+    by0 = float(p_bbox[1]) if len(p_bbox) >= 4 else 0.0
+
+    if raw_mb is not None and raw_cb is not None and len(raw_mb) >= 4 and len(raw_cb) >= 4:
+        mx0, my0, mx1, my1 = [float(v) for v in raw_mb[:4]]
+        cx0, cy0, cx1, cy1 = [float(v) for v in raw_cb[:4]]
+        cx0, cy0 = max(mx0, cx0), max(my0, cy0)
+        cx1, cy1 = min(mx1, cx1), min(my1, cy1)
+        m_left = cx0 - mx0
+        m_right = mx1 - cx1
+        m_bottom = cy0 - my0
+        m_top = my1 - cy1
+        cw = max(1.0, cx1 - cx0)
+        ch = max(1.0, cy1 - cy0)
+        rot = int(getattr(page, "rotation", 0) or 0) % 360
+        if rot == 90:
+            return bx0 + m_bottom, by0 + m_left, ch, cw
+        elif rot == 180:
+            return bx0 + m_right, by0 + m_bottom, cw, ch
+        elif rot == 270:
+            return bx0 + m_top, by0 + m_right, ch, cw
+        else:
+            return bx0 + m_left, by0 + m_top, cw, ch
+
+    return bx0, by0, max(1.0, float(page.width)), max(1.0, float(page.height))
+
+
+def _normalize_rect_to_visible(
+    rect: Optional[List[float]],
+    crop_x0: float,
+    crop_y0: float,
+    vis_w: float,
+    vis_h: float,
+) -> Optional[List[float]]:
+    """Subtracts CropBox origin once and clamps to [0..vis_w] x [0..vis_h]. Returns None if degenerate."""
+    if not rect or len(rect) < 4:
+        return None
+    try:
+        x0, y0, x1, y1 = float(rect[0]), float(rect[1]), float(rect[2]), float(rect[3])
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in (x0, y0, x1, y1)):
+        return None
+    nx0 = max(0.0, min(vis_w, x0 - crop_x0))
+    ny0 = max(0.0, min(vis_h, y0 - crop_y0))
+    nx1 = max(0.0, min(vis_w, x1 - crop_x0))
+    ny1 = max(0.0, min(vis_h, y1 - crop_y0))
+    if nx1 <= nx0 or ny1 <= ny0:
+        return None
+    return [round(nx0, 1), round(ny0, 1), round(nx1, 1), round(ny1, 1)]
+
+
+def _normalize_table_to_visible_frame(
+    tbl: Dict[str, Any],
+    crop_x0: float,
+    crop_y0: float,
+    vis_w: float,
+    vis_h: float,
+) -> Dict[str, Any]:
+    """Normalizes table bbox and all cell rects into visible 72-DPI point space (single point of compensation)."""
+    norm_tbbox = _normalize_rect_to_visible(tbl.get("bbox"), crop_x0, crop_y0, vis_w, vis_h)
+    if norm_tbbox is not None:
+        tbl["bbox"] = norm_tbbox
+        tbl["y_bottom"] = norm_tbbox[3]
+    tbl["page_width_pt"] = round(vis_w, 2)
+    tbl["page_height_pt"] = round(vis_h, 2)
+
+    for row in tbl.get("rows", []):
+        if not isinstance(row, list):
+            continue
+        for cell in row:
+            if not isinstance(cell, dict):
+                continue
+            raw_b = cell.get("cell_rect") or cell.get("bbox")
+            norm_b = _normalize_rect_to_visible(raw_b, crop_x0, crop_y0, vis_w, vis_h)
+            cell["bbox"] = norm_b
+            cell["cell_rect"] = norm_b
+            if "bbox_approx" not in cell:
+                cell["bbox_approx"] = norm_b is None
+    return tbl
+
 
 class FastPdfReader:
+    RENDER_SCALE: float = RENDER_SCALE
+
     @staticmethod
-    def render_page_to_bytes(pdf_path: str, page_num: int, scale: float = 1.5) -> bytes:
+    def _px_to_pt(
+        bbox: Optional[List[float]],
+        crop_origin_px: Tuple[float, float] = (0.0, 0.0),
+        scale: float = RENDER_SCALE,
+    ) -> Optional[List[float]]:
+        """
+        Converts an OCR pixel bbox [x0, y0, x1, y1] (relative to cropped image)
+        into normalized 72-DPI PDF points in the visible page frame:
+            (px + crop_origin_px) / scale
+        Returns None if bbox is missing, non-finite, or has width <= 0 or height <= 0.
+        """
+        if not bbox or len(bbox) < 4 or scale <= 0:
+            return None
+        try:
+            px0, py0, px1, py1 = float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])
+            ox, oy = float(crop_origin_px[0]), float(crop_origin_px[1])
+        except (TypeError, ValueError):
+            return None
+        if not all(math.isfinite(v) for v in (px0, py0, px1, py1, ox, oy)):
+            return None
+        if px1 <= px0 or py1 <= py0:
+            return None
+        return [
+            round((px0 + ox) / scale, 1),
+            round((py0 + oy) / scale, 1),
+            round((px1 + ox) / scale, 1),
+            round((py1 + oy) / scale, 1),
+        ]
+
+    @staticmethod
+    def render_page_to_bytes(pdf_path: str, page_num: int, scale: float = RENDER_SCALE) -> bytes:
         """
         Renders a specific PDF page to PNG image bytes using pypdfium2.
         Page numbers are 1-based.
@@ -50,6 +190,7 @@ class FastPdfReader:
         detected_total_n = None
         page_images_map: Dict[int, str] = {}
         page_dimensions: Dict[int, List[float]] = {}
+        page_sizes: Dict[int, Dict[str, float]] = {}
 
         try:
             num_pages = len(doc_pdfium)
@@ -65,7 +206,9 @@ class FastPdfReader:
                             "tables": [],
                             "page_images": page_images_map,
                             "num_pages": num_pages,
-                            "page_dimensions": page_dimensions
+                            "page_dimensions": page_dimensions,
+                            "page_sizes": page_sizes,
+                            "render_scale": RENDER_SCALE
                         }
 
                     if progress_callback:
@@ -83,7 +226,7 @@ class FastPdfReader:
                             progress_callback(p_idx, num_pages, f"Merender halaman {p_idx}/{num_pages}", pct)
 
                     page_p = doc_pdfium[p_idx - 1]
-                    image = page_p.render(scale=1.5).to_pil()
+                    image = page_p.render(scale=RENDER_SCALE).to_pil()
                     img_filename = f"page_{p_idx}.png"
                     img_path = os.path.join(output_images_dir, img_filename)
                     image.save(img_path, format="PNG", compress_level=1)
@@ -107,18 +250,27 @@ class FastPdfReader:
                         "tables": all_tables,
                         "page_images": page_images_map,
                         "num_pages": num_pages,
-                        "page_dimensions": page_dimensions
+                        "page_dimensions": page_dimensions,
+                        "page_sizes": page_sizes,
+                        "render_scale": RENDER_SCALE
                     }
 
-                p_box = getattr(page, "bbox", [0, 0, page.width, page.height])
+                # Unified visible CropBox frame (72-DPI PDF points, /Rotate-aware).
+                # Single point of CropBox compensation: origin offsets stored as 0.0 because
+                # all emitted table/cell/claim coordinates are pre-compensated below.
+                crop_x0, crop_y0, vis_w, vis_h = get_visible_page_frame(page)
                 page_dimensions[page_idx] = [
-                    round(float(page.width), 2),
-                    round(float(page.height), 2),
-                    round(float(p_box[0]), 2) if len(p_box) >= 4 else 0.0,
-                    round(float(p_box[1]), 2) if len(p_box) >= 4 else 0.0
+                    round(vis_w, 2),
+                    round(vis_h, 2),
+                    0.0,
+                    0.0
                 ]
+                page_sizes[page_idx] = {
+                    "page_width_pt": round(vis_w, 2),
+                    "page_height_pt": round(vis_h, 2)
+                }
                 page_text = page.extract_text() or ""
-                words = page.extract_words() or []
+                raw_words = page.extract_words() or []
 
                 if progress_callback:
                     pct = int(25 + (page_idx / max(1, num_pages)) * 25)
@@ -151,8 +303,12 @@ class FastPdfReader:
                         except Exception:
                             pass
 
-                # Extract tables on this page reusing pre-extracted words
-                page_tables = TableGeometryExtractor.extract_tables_from_pdfplumber_page(page, page_idx, pre_extracted_words=words)
+                # Extract tables on this page reusing pre-extracted words, then normalize ONCE to visible CropBox space
+                page_tables = TableGeometryExtractor.extract_tables_from_pdfplumber_page(page, page_idx, pre_extracted_words=raw_words)
+                page_tables = [
+                    _normalize_table_to_visible_frame(t, crop_x0, crop_y0, vis_w, vis_h)
+                    for t in page_tables
+                ]
 
                 # OCR Fallback for scanned/image tables if vector tables are empty
                 if not page_tables and hasattr(page, "images") and page.images and output_images_dir:
@@ -166,18 +322,29 @@ class FastPdfReader:
                                 page_img_path = os.path.join(output_images_dir, f"page_{page_idx}.png")
                                 if os.path.exists(page_img_path):
                                     with Image.open(page_img_path) as full_img:
-                                        pw = float(page.width) or 1.0
-                                        ph = float(page.height) or 1.0
-                                        scale_x = full_img.width / pw
-                                        scale_y = full_img.height / ph
+                                        img_region_rect = _normalize_rect_to_visible(
+                                            [
+                                                float(img_meta.get("x0", crop_x0)),
+                                                float(img_meta.get("top", crop_y0)),
+                                                float(img_meta.get("x1", crop_x0 + vis_w)),
+                                                float(img_meta.get("bottom", crop_y0 + vis_h)),
+                                            ],
+                                            crop_x0, crop_y0, vis_w, vis_h
+                                        )
+                                        if not img_region_rect:
+                                            continue
 
-                                        x0 = max(0, int(float(img_meta.get("x0", 0)) * scale_x))
-                                        y0 = max(0, int(float(img_meta.get("top", 0)) * scale_y))
-                                        x1 = min(full_img.width, int(float(img_meta.get("x1", pw)) * scale_x))
-                                        y1 = min(full_img.height, int(float(img_meta.get("bottom", ph)) * scale_y))
+                                        scale_x = full_img.width / vis_w if vis_w > 0 else RENDER_SCALE
+                                        scale_y = full_img.height / vis_h if vis_h > 0 else RENDER_SCALE
+                                        eff_scale = 0.5 * (scale_x + scale_y) if (scale_x > 0 and scale_y > 0) else RENDER_SCALE
 
-                                        if x1 > x0 and y1 > y0:
-                                            cropped = full_img.crop((x0, y0, x1, y1))
+                                        crop_px_x0 = max(0, int(round(img_region_rect[0] * scale_x)))
+                                        crop_px_y0 = max(0, int(round(img_region_rect[1] * scale_y)))
+                                        crop_px_x1 = min(full_img.width, int(round(img_region_rect[2] * scale_x)))
+                                        crop_px_y1 = min(full_img.height, int(round(img_region_rect[3] * scale_y)))
+
+                                        if crop_px_x1 > crop_px_x0 and crop_px_y1 > crop_px_y0:
+                                            cropped = full_img.crop((crop_px_x0, crop_px_y0, crop_px_x1, crop_px_y1))
                                             ocr_res = OcrTableFallback.extract_table_from_image(np.array(cropped))
                                             if ocr_res and ocr_res.get("rows"):
                                                 ocr_rows = []
@@ -185,14 +352,37 @@ class FastPdfReader:
                                                     s_row = []
                                                     for c_idx, cell in enumerate(row_cells):
                                                         c_text = ""
-                                                        c_bbox = [0, 0, 0, 0]
+                                                        raw_px_bbox = None
                                                         if isinstance(cell, str):
                                                             c_text = cell
                                                         elif isinstance(cell, dict):
                                                             c_text = cell.get("text") or cell.get("raw_val") or ""
-                                                            c_bbox = cell.get("bbox", [0, 0, 0, 0])
+                                                            raw_px_bbox = cell.get("bbox")
                                                         else:
                                                             c_text = str(cell)
+
+                                                        pt_bbox = cls._px_to_pt(
+                                                            raw_px_bbox,
+                                                            crop_origin_px=(crop_px_x0, crop_px_y0),
+                                                            scale=eff_scale,
+                                                        )
+                                                        if pt_bbox is not None:
+                                                            # Clamp converted OCR cell rect to the image region
+                                                            pt_bbox = [
+                                                                round(max(img_region_rect[0], min(img_region_rect[2], pt_bbox[0])), 1),
+                                                                round(max(img_region_rect[1], min(img_region_rect[3], pt_bbox[1])), 1),
+                                                                round(max(img_region_rect[0], min(img_region_rect[2], pt_bbox[2])), 1),
+                                                                round(max(img_region_rect[1], min(img_region_rect[3], pt_bbox[3])), 1),
+                                                            ]
+                                                            if pt_bbox[2] <= pt_bbox[0] or pt_bbox[3] <= pt_bbox[1]:
+                                                                pt_bbox = None
+
+                                                        if pt_bbox is None:
+                                                            cell_rect = list(img_region_rect)
+                                                            is_approx = True
+                                                        else:
+                                                            cell_rect = pt_bbox
+                                                            is_approx = False
 
                                                         num_val = None
                                                         try:
@@ -211,7 +401,9 @@ class FastPdfReader:
                                                             "num_val": num_val,
                                                             "header_path": f"Kolom_{c_idx+1}",
                                                             "row_label": f"Baris_{r_idx+1}",
-                                                            "bbox": c_bbox
+                                                            "bbox": cell_rect,
+                                                            "cell_rect": cell_rect,
+                                                            "bbox_approx": is_approx
                                                         })
                                                     if s_row:
                                                         ocr_rows.append(s_row)
@@ -222,14 +414,11 @@ class FastPdfReader:
                                                         "page": page_idx,
                                                         "table_num": "OCR",
                                                         "normalized_id": f"OCR_{page_idx}",
-                                                        "y_bottom": round(float(img_meta.get("bottom", 0)), 1),
+                                                        "page_width_pt": round(vis_w, 2),
+                                                        "page_height_pt": round(vis_h, 2),
+                                                        "y_bottom": img_region_rect[3],
                                                         "caption": f"Tabel Gambar Halaman {page_idx}",
-                                                        "bbox": [
-                                                            round(float(img_meta.get("x0", 0)), 1),
-                                                            round(float(img_meta.get("top", 0)), 1),
-                                                            round(float(img_meta.get("x1", 0)), 1),
-                                                            round(float(img_meta.get("bottom", 0)), 1)
-                                                        ],
+                                                        "bbox": list(img_region_rect),
                                                         "num_rows": len(ocr_rows),
                                                         "num_cols": max(len(r) for r in ocr_rows),
                                                         "header_paths": [f"Kolom_{i+1}" for i in range(max(len(r) for r in ocr_rows))],
@@ -248,11 +437,23 @@ class FastPdfReader:
                 if page_tables:
                     current_section_variable = None
 
+                # Normalize narrative words ONCE into the visible CropBox coordinate frame [0..vis_w] x [0..vis_h]
+                words = []
+                for w in raw_words:
+                    nw = dict(w)
+                    nw["x0"] = float(w["x0"]) - crop_x0
+                    nw["x1"] = float(w["x1"]) - crop_x0
+                    nw["top"] = float(w["top"]) - crop_y0
+                    nw["bottom"] = float(w["bottom"]) - crop_y0
+                    if nw["x1"] > 0.0 and nw["x0"] < vis_w and nw["bottom"] > 0.0 and nw["top"] < vis_h:
+                        words.append(nw)
+
                 # Determine table bounding boxes to subtract table words from narrative text
-                t_bboxes = [t["bbox"] for t in page_tables if "bbox" in t and len(t["bbox"]) == 4]
-                page_h = float(page.height)
+                t_bboxes = [t["bbox"] for t in page_tables if "bbox" in t and t["bbox"] and len(t["bbox"]) == 4]
+                page_h = vis_h
 
                 # Filter words that are strictly OUTSIDE all table bounding boxes (with 6pt padding)
+                # Header/footer check operates on normalized visible coordinates (C8 CropBox-aware).
                 clean_words = []
                 for w in words:
                     wx = 0.5 * (float(w["x0"]) + float(w["x1"]))
@@ -322,6 +523,8 @@ class FastPdfReader:
                         all_claims.append({
                             "claim_id": f"C_{page_idx}_{len(all_claims)+1}",
                             "page": page_idx,
+                            "page_width_pt": round(vis_w, 2),
+                            "page_height_pt": round(vis_h, 2),
                             "text": sent,
                             "chapter": current_chapter,
                             "section_heading": current_section_heading,
@@ -330,6 +533,7 @@ class FastPdfReader:
                             "bbox": [round(x0, 1), round(top, 1), round(x1, 1), round(bottom, 1)],
                             "claim_y_top": round(top, 1),
                             "boxes": line_boxes,
+                            "claim_rects": line_boxes,
                             "is_formula": is_formula
                         })
 
@@ -436,5 +640,7 @@ class FastPdfReader:
             "tables": stitched_tables,
             "claims": all_claims,
             "page_images": page_images_map,
-            "page_dimensions": page_dimensions
+            "page_dimensions": page_dimensions,
+            "page_sizes": page_sizes,
+            "render_scale": RENDER_SCALE
         }
