@@ -381,17 +381,18 @@ def match_sentence_to_row(
         if best_r:
             return best_r
 
-    # Cek penyebutan langsung nama variabel di KLAUSA UTAMA atau seluruh kalimat
+    # Cek penyebutan langsung nama variabel di KLAUSA UTAMA (DILARANG membiarkan anak kalimat penjelas menimpa Prioritas 2/3)
     scored_candidates = []
+    has_sub_clause = bool(sub_clause.strip())
     for r_lbl in valid_labels:
         r_low = r_lbl.lower().strip()
         r_stem = normalize_variable_stem(r_low)
         score = 0.0
 
-        # 1. Exact match full label
+        # 1. Exact match full label strictly in main_clause (or full sentence only if no explanatory sub-clause exists)
         if re.search(r"\b" + re.escape(r_low) + r"\b", main_clause_lower) or (len(r_stem) >= 3 and re.search(r"\b" + re.escape(r_stem) + r"\b", main_clause_lower)):
             score = 100.0
-        elif re.search(r"\b" + re.escape(r_low) + r"\b", s_lower) or (len(r_stem) >= 3 and re.search(r"\b" + re.escape(r_stem) + r"\b", s_lower)):
+        elif not has_sub_clause and (re.search(r"\b" + re.escape(r_low) + r"\b", s_lower) or (len(r_stem) >= 3 and re.search(r"\b" + re.escape(r_stem) + r"\b", s_lower))):
             score = 90.0
         elif match_variable_row_score(main_clause, r_lbl) >= 0.75:
             score = 80.0
@@ -399,12 +400,13 @@ def match_sentence_to_row(
             parts = [p.strip() for p in r_low.split("-") if len(p.strip()) >= 3]
             parent_p = parts[0] if parts else ""
             child_p = parts[-1] if len(parts) > 1 else ""
+            search_scope = main_clause_lower if has_sub_clause else s_lower
 
-            parent_match = bool(re.search(r"\b" + re.escape(parent_p) + r"\b", s_lower))
-            child_match = bool(re.search(r"\b" + re.escape(child_p) + r"\b", s_lower) or re.search(r"\b" + re.escape(child_p) + r"\b", main_clause_lower))
+            parent_match = bool(re.search(r"\b" + re.escape(parent_p) + r"\b", search_scope))
+            child_match = bool(re.search(r"\b" + re.escape(child_p) + r"\b", search_scope))
             if not child_match:
                 for g_pat in [r"eksperimen\s*1", r"eksperimen\s*2", r"eksperimen\s*3", r"kontrol"]:
-                    if (re.search(r"\b" + g_pat + r"\b", s_lower) or re.search(r"\b" + g_pat + r"\b", main_clause_lower)) and re.search(r"\b" + g_pat + r"\b", child_p):
+                    if re.search(r"\b" + g_pat + r"\b", search_scope) and re.search(r"\b" + g_pat + r"\b", child_p):
                         child_match = True
                         break
 
@@ -416,8 +418,9 @@ def match_sentence_to_row(
             else:
                 score = 0.0
         else:
+            search_scope = main_clause_lower if has_sub_clause else s_lower
             for g_pat in [r"eksperimen\s*1", r"eksperimen\s*2", r"eksperimen\s*3", r"kontrol"]:
-                if (re.search(r"\b" + g_pat + r"\b", s_lower) or re.search(r"\b" + g_pat + r"\b", main_clause_lower)) and re.search(r"\b" + g_pat + r"\b", r_low):
+                if re.search(r"\b" + g_pat + r"\b", search_scope) and re.search(r"\b" + g_pat + r"\b", r_low):
                     score = 30.0
                     break
 
@@ -1441,8 +1444,9 @@ class CellLinker:
             if nearby_tables:
                 eval_tables = sorted(nearby_tables, key=lambda t: abs(t.get("page", 1) - claim_page))[:3]
             else:
-                # Jangan pernah menautkan klaim tanpa nomor tabel ke tabel yang berjarak > 2 halaman (mencegah halusinasi lintas bab)
-                return findings
+                # Jangan pernah menautkan klaim tanpa nomor tabel ke tabel yang berjarak > 2 halaman (mencegah halusinasi lintas bab),
+                # namun tetap lanjutkan ke pengecekan rumus inline (Z-formula, dll.) saat eval_tables kosong.
+                eval_tables = []
 
         for tbl in eval_tables:
             # Isolasi Kode Variabel Lintas Tabel (misal paragraf X2 tidak boleh dicocokkan ke Tabel X3)
@@ -1586,34 +1590,40 @@ class CellLinker:
                                     col_name_display = "Frekuensi (Frequency)" if lc.metric_type == "FREQUENCY" else "Persentase (Percent)"
                                     snippet = build_row_snippet(tbl, spss_row.raw_label, lc.metric_type)
 
-                                    # Cari sel sebenarnya di tbl["rows"] yang barisnya cocok dengan spss_row.raw_label
-                                    # (cek kolom 0 dan kolom 1) dan kolomnya cocok dengan lc.metric_type
+                                    # Cari sel sebenarnya di tbl["rows"] yang barisnya cocok eksak dengan spss_row.raw_label
+                                    # (tolak baris Valid/Missing & tolak substring 'setuju' di dalam 'sangat tidak setuju')
+                                    # dan kolomnya cocok dengan lc.metric_type (tolak Cumulative Percent untuk PERCENT!).
                                     target_cell = None
                                     target_col_key = lc.metric_type.upper()
+                                    target_lbl_low = spss_row.raw_label.lower().strip()
+                                    target_aliases = set(LIKERT_ROW_ALIASES.get(lc.category_code, []))
                                     for r in tbl.get("rows", []):
                                         match_row = False
                                         for c_cand in r[:2]:
                                             lbl = str(c_cand.get("raw_val") or c_cand.get("row_label") or "").strip().lower()
-                                            if lbl and (lbl == spss_row.raw_label.lower() or spss_row.raw_label.lower() in lbl or lbl in spss_row.raw_label.lower()):
-                                                match_row = True
-                                                break
-                                            if lbl in LIKERT_ROW_ALIASES.get(lc.category_code, []):
+                                            if not lbl or lbl in ("valid", "missing", "system"):
+                                                continue
+                                            if lbl == target_lbl_low or lbl in target_aliases:
                                                 match_row = True
                                                 break
                                         if match_row:
+                                            valid_pct_fallback = None
                                             for c in r:
-                                                h_str = str(c.get("header_path", "")).lower()
+                                                h_str = str(c.get("header_path", "")).lower().strip()
                                                 if target_col_key == "FREQUENCY":
                                                     if any(k in h_str for k in ["frequency", "frekuensi", "jumlah"]) or h_str == "f":
                                                         target_cell = c
                                                         break
                                                 elif target_col_key == "PERCENT":
-                                                    if ("percent" in h_str or "persentase" in h_str or "%" in h_str) and "valid" not in h_str and "cumulative" not in h_str:
+                                                    if "cumulative" in h_str or "kumulatif" in h_str:
+                                                        continue
+                                                    if ("percent" in h_str or "persentase" in h_str or "%" in h_str) and "valid" not in h_str:
                                                         target_cell = c
                                                         break
-                                                    elif "percent" in h_str or "persentase" in h_str or "%" in h_str:
-                                                        target_cell = c
-                                                        break
+                                                    elif ("percent" in h_str or "persentase" in h_str) and valid_pct_fallback is None:
+                                                        valid_pct_fallback = c
+                                            if not target_cell and valid_pct_fallback is not None:
+                                                target_cell = valid_pct_fallback
                                             if target_cell:
                                                 break
 
@@ -2904,6 +2914,7 @@ class CellLinker:
             )
             if findings:
                 for f in findings:
+                    f["_source_claim_ref"] = claim
                     all_findings.append(f)
                     verdict = f.get("verdict", "")
                     if verdict == "PASS_EXACT_MATCH":
@@ -2921,8 +2932,35 @@ class CellLinker:
             else:
                 pass_count += 1
 
-        # Guarantee all 10 single-source-of-truth contract fields exist on every finding
+        render_scale = float(doc_graph.get("render_scale", 1.5) or 1.5)
+
+        def _lookup_page_size(pg: Optional[int]) -> Tuple[Optional[float], Optional[float]]:
+            if pg is None or not page_dims:
+                return None, None
+            dim = page_dims.get(pg) or page_dims.get(str(pg))
+            if dim and len(dim) >= 2:
+                try:
+                    w, h = float(dim[0]), float(dim[1])
+                    if w > 0 and h > 0:
+                        return round(w, 2), round(h, 2)
+                except (TypeError, ValueError):
+                    pass
+            return None, None
+
+        def _valid_rect4(r: Any) -> Optional[List[float]]:
+            if not isinstance(r, (list, tuple)) or len(r) < 4:
+                return None
+            try:
+                x0, y0, x1, y1 = float(r[0]), float(r[1]), float(r[2]), float(r[3])
+            except (TypeError, ValueError):
+                return None
+            if all(math.isfinite(v) for v in (x0, y0, x1, y1)) and x1 > x0 and y1 > y0:
+                return [round(x0, 1), round(y0, 1), round(x1, 1), round(y1, 1)]
+            return None
+
+        # Guarantee all single-source-of-truth contract fields & precision X-Ray geometry fields on every finding
         for f in all_findings:
+            src_claim = f.pop("_source_claim_ref", None)
             if not f.get("table_ref"):
                 t_id = f.get("table_evidence", {}).get("table_id", "Tabel")
                 p = f.get("table_evidence", {}).get("page", 1)
@@ -2950,6 +2988,54 @@ class CellLinker:
             if "table_bbox_norm" not in f or f.get("table_bbox_norm") is None:
                 matched_tbl = next((t for t in tables if str(t.get("table_id")) == str(f.get("table_evidence", {}).get("table_id"))), None)
                 f["table_bbox_norm"] = build_table_bbox_norm(matched_tbl, page_dims)
+
+            # Precision X-Ray geometry fields (2.6)
+            claim_src = f.setdefault("claim_source", {})
+            c_page = claim_src.get("page", 1)
+            c_w, c_h = _lookup_page_size(c_page)
+            if c_w is None and src_claim:
+                c_w = src_claim.get("page_width_pt")
+                c_h = src_claim.get("page_height_pt")
+
+            raw_claim_rects = (
+                (src_claim.get("claim_rects") if src_claim else None)
+                or claim_src.get("claim_rects")
+                or claim_src.get("boxes")
+                or ([claim_src["bbox"]] if claim_src.get("bbox") else [])
+            )
+            valid_claim_rects = [vr for r in (raw_claim_rects or []) if (vr := _valid_rect4(r)) is not None]
+            claim_src["claim_rects"] = valid_claim_rects
+            claim_src["boxes"] = valid_claim_rects
+            claim_src["bbox"] = _valid_rect4(claim_src.get("bbox"))
+            claim_src["value_rect"] = find_value_rect_in_claim(src_claim, f.get("claim_value_display"))
+
+            tbl_ev = f.setdefault("table_evidence", {})
+            ev_page = tbl_ev.get("page")
+            ev_w, ev_h = _lookup_page_size(ev_page)
+            ev_cells = tbl_ev.get("cells") or []
+            primary_cell_rect = None
+            sanitized_cells = []
+            for cell in ev_cells:
+                if not isinstance(cell, dict):
+                    continue
+                c_copy = dict(cell)
+                c_rect = _valid_rect4(c_copy.get("cell_rect") or c_copy.get("bbox"))
+                c_copy["bbox"] = c_rect
+                c_copy["cell_rect"] = c_rect
+                c_copy["bbox_approx"] = bool(c_copy.get("bbox_approx", c_rect is None))
+                if primary_cell_rect is None and c_rect is not None:
+                    primary_cell_rect = c_rect
+                sanitized_cells.append(c_copy)
+            tbl_ev["cells"] = sanitized_cells
+
+            f["page_width_pt"] = c_w
+            f["page_height_pt"] = c_h
+            f["render_scale"] = render_scale
+            f["claim_rects"] = valid_claim_rects
+            f["cell_page"] = ev_page
+            f["cell_page_width_pt"] = ev_w
+            f["cell_page_height_pt"] = ev_h
+            f["cell_rect"] = primary_cell_rect
 
         # Deduplikasi temuan yang identik agar UI demo tidak menampilkan kartu berulang
         unique_findings = []

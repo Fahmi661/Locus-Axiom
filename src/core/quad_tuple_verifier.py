@@ -302,16 +302,24 @@ def match_variable_row_score(claim_var: str, row_header: str) -> float:
 
 
 def classify_column_header(col_header: str) -> Tuple[Optional[str], float]:
-    """Memetakan nama kolom tabel ke salah satu STAT_TYPES kanonik."""
+    """
+    Memetakan nama kolom tabel (termasuk header multi-tier SPSS 'Parent :: Leaf')
+    ke salah satu STAT_TYPES kanonik.
+    """
     h = col_header.lower().strip()
     h_clean = re.sub(r"\s+", " ", h)
 
-    for stat_type, synonyms in COLUMN_HEADER_SYNONYMS.items():
-        for syn in synonyms:
-            if h_clean == syn:
-                return stat_type, 1.0
-            if len(syn) >= 3 and re.search(rf"\b{re.escape(syn)}\b", h_clean):
-                return stat_type, 0.92
+    # Prioritaskan leaf segment pada multi-tier header (mis. 'Coefficients :: t', 'Descriptive Statistics :: N')
+    segments = [seg.strip() for seg in h_clean.split("::") if seg.strip()]
+    leaf = segments[-1] if segments else h_clean
+
+    for target in (leaf, h_clean):
+        for stat_type, synonyms in COLUMN_HEADER_SYNONYMS.items():
+            for syn in synonyms:
+                if target == syn:
+                    return stat_type, 1.0
+                if len(syn) >= 3 and re.search(rf"\b{re.escape(syn)}\b", target):
+                    return stat_type, 0.92
 
     return None, 0.0
 
@@ -505,6 +513,9 @@ def extract_quad_tuples_from_sentence(
         ignored_spans.append((m.start(), m.end()))
 
     quad_tuples: List[ClaimQuadTuple] = []
+    # Track previously bound (num_end, stat_span) for strict local token binding in compound sentences
+    prev_num_end = 0
+    consumed_stat_spans: set = set()
 
     for m in NUMBER_TOKEN_REGEX.finditer(s_norm):
         c_start, c_end = m.start(), m.end()
@@ -537,8 +548,9 @@ def extract_quad_tuples_from_sentence(
             if re.search(r"(?:lebih\s+besar(?:\s+dari)?|lebih\s+kecil(?:\s+dari)?|di\s+atas|di\s+bawah|kurang\s+dari|melebihi|alpha|α|taraf\s+signifikansi|tingkat\s+signifikansi|batas\s+kritis|ambang|>=|<=|>|<)\s*(?:pada|sebesar|=)?\s*$", left_45):
                 continue
 
-        # Cek operator pertidaksamaan di sebelah kiri angka (40 karakter)
-        left_op = s_lower[max(0, c_start - 40):c_start]
+        # Cek operator pertidaksamaan lokal di sebelah kiri angka (dibatasi sampai angka sebelumnya)
+        op_win_start = max(0, c_start - 40, prev_num_end)
+        left_op = s_lower[op_win_start:c_start]
         op = "EQ"
         if re.search(r"(?:>=|≥|minimal|sekurang-kurangnya|paling\s+sedikit|tidak\s+kurang\s+dari|lebih\s+besar\s+atau\s+sama\s+dengan|lebih\s+dari\s+atau\s+sama\s+dengan)\s*(?:sebesar|senilai|adalah|yaitu|yakni|=)?\s*$", left_op):
             op = "GTE"
@@ -551,6 +563,7 @@ def extract_quad_tuples_from_sentence(
 
         # Cek jika angka merupakan batas rentang nilai atau pasangan berurutan
         best_stat: Optional[str] = None
+        chosen_stat_span: Optional[Tuple[int, int]] = None
         if (c_start, c_end) in range_stat_map:
             best_stat = range_stat_map[(c_start, c_end)]
         else:
@@ -559,7 +572,21 @@ def extract_quad_tuples_from_sentence(
                     best_stat = r_stat
                     break
 
-        # Cari Jenis Statistik terdekat: utamakan di sebelah kiri angka (jarak <= 85 char)
+        # Local Token Binding: cek dulu apakah ada label statistik ketat langsung di sebelah kanan dalam tanda kurung
+        # (mis. "0,018 (Sig.)" atau "2,415 (t hitung)") agar tidak direbut label kiri dari klausa sebelumnya.
+        tight_right_stat: Optional[str] = None
+        tight_right_span: Optional[Tuple[int, int]] = None
+        if best_stat is None:
+            for st_start, st_end, st_type in stat_mentions:
+                if st_start >= c_end:
+                    dist_r = st_start - c_end
+                    between_r = s_norm[c_end:st_start]
+                    if dist_r <= 12 and re.match(r"^\s*\(\s*$", between_r):
+                        tight_right_stat = st_type
+                        tight_right_span = (st_start, st_end)
+                        break
+
+        # Cari Jenis Statistik terdekat di sebelah kiri angka (jarak <= 85 char)
         if best_stat is None:
             best_dist = 9999
             for st_start, st_end, st_type in stat_mentions:
@@ -570,12 +597,35 @@ def extract_quad_tuples_from_sentence(
                     # tidak boleh memutus ikatan statistik ke angka berikutnya
                     has_sentence_break = bool(re.search(r"[;]|\.\s+[A-Z]", between_text)) or "artinya" in between_text.lower()
                     if dist <= 85 and not has_sentence_break:
+                        # Jika label kiri ini sudah dikonsumsi oleh angka sebelumnya dan ada konjungsi/koma
+                        # tanpa apositif eksplisit (yaitu/yakni), jangan izinkan label kiri merebut angka baru
+                        # bila ada tight_right_stat atau konjungsi koordinatif ('dan', 'dengan', 'serta').
+                        if (st_start, st_end) in consumed_stat_spans:
+                            after_prev = s_norm[prev_num_end:c_start].lower() if prev_num_end >= st_end else between_text.lower()
+                            is_appositive = bool(re.search(r"\b(?:yaitu|yakni|adalah|sebesar)\b", after_prev))
+                            has_coord = bool(re.search(r"\b(?:dan|dengan|serta|sedangkan)\b|,", after_prev))
+                            if tight_right_stat is not None or (has_coord and not is_appositive):
+                                continue
                         if dist < best_dist:
                             best_dist = dist
                             best_stat = st_type
+                            chosen_stat_span = (st_start, st_end)
+
+        # Jika ada tight_right_stat (mis. "0,018 (Sig.)") dan left_stat jauh (> 20 char atau terpisah konjungsi),
+        # utamakan label lokal langsung di kanan angka.
+        if tight_right_stat is not None:
+            if best_stat is None or chosen_stat_span is None:
+                best_stat = tight_right_stat
+                chosen_stat_span = tight_right_span
+            else:
+                between_left = s_norm[chosen_stat_span[1]:c_start].lower()
+                if re.search(r"\b(?:dan|dengan|serta|sedangkan)\b|,", between_left):
+                    best_stat = tight_right_stat
+                    chosen_stat_span = tight_right_span
 
         # Jika di sebelah kiri belum ada, cari di sebelah kanan (kalimat pasif/inversi: "sebesar X tercatat sebagai Y")
         if best_stat is None:
+            best_dist = 9999
             blocked_right_words = ("artinya", "yaitu", "dapat", "selisih", "dibanding", "sedangkan", "sehingga", "karena")
             for st_start, st_end, st_type in stat_mentions:
                 if st_start >= c_end:
@@ -587,6 +637,7 @@ def extract_quad_tuples_from_sentence(
                             if dist < best_dist:
                                 best_dist = dist
                                 best_stat = st_type
+                                chosen_stat_span = (st_start, st_end)
 
         if best_stat is None and is_pct:
             best_stat = "PERCENTAGE"
@@ -598,6 +649,10 @@ def extract_quad_tuples_from_sentence(
 
         if best_stat is None:
             continue
+
+        prev_num_end = c_end
+        if chosen_stat_span is not None:
+            consumed_stat_spans.add(chosen_stat_span)
 
         # Atomic Clause Variable Resolution: tentukan klausa aktif untuk angka ini
         cur_clause_start = 0

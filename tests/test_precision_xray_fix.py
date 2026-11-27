@@ -543,4 +543,254 @@ def test_two_line_claim_has_two_rects_and_value_rect_inside():
         os.unlink(pdf_path)
 
 
+# =====================================================================
+# 2.6: Compound Clause Binding, Floating Tables, Likert Isolation, API Schema
+# =====================================================================
+
+def test_compound_sentence_local_token_binding():
+    """
+    2.6: Compound sentence with multiple numeric claims and comparison operators:
+    'Variabel Likuiditas memiliki t hitung 2,415 > t tabel 1,984 dengan Sig. 0,018 < 0,05.'
+    binds 2.415 strictly to STAT_TEST and 0.018 strictly to P_VALUE, and verifies
+    accurately against a multi-tier SPSS Coefficients table.
+    """
+    from src.core.quad_tuple_verifier import (
+        extract_quad_tuples_from_sentence,
+        verify_quad_tuple_against_table,
+    )
+
+    sent = "Variabel Likuiditas memiliki t hitung 2,415 > t tabel 1,984 dengan Sig. 0,018 < 0,05."
+    headers = [
+        "Model",
+        "Unstandardized Coefficients :: B",
+        "Unstandardized Coefficients :: Std. Error",
+        "Standardized Coefficients :: Beta",
+        "Coefficients :: t",
+        "Coefficients :: Sig.",
+    ]
+    rows = [
+        ["(Constant)", "1.245", ".312", "", "3.990", ".000"],
+        ["Likuiditas", ".418", ".105", ".352", "2.415", ".018"],
+    ]
+
+    quads = extract_quad_tuples_from_sentence(sent, candidate_table_variables=["Likuiditas"])
+    stat_map = {q.stat_type: q for q in quads}
+    assert "STAT_TEST" in stat_map and abs(stat_map["STAT_TEST"].numeric_value - 2.415) < 1e-6
+    assert "P_VALUE" in stat_map and abs(stat_map["P_VALUE"].numeric_value - 0.018) < 1e-6
+    # Critical thresholds (1.984 and 0.05) must NOT leak as empirical contradictions
+    assert len(quads) == 2
+
+    for q in quads:
+        res = verify_quad_tuple_against_table(q, headers, rows)
+        assert res.status == "VALID_EXACT", f"Expected VALID_EXACT for {q.stat_type}, got {res.status}: {res.explanation_id}"
+
+    # Post-positioned labels in compound sentence must bind locally, never steal earlier left label
+    sent_post = "Variabel Likuiditas memperoleh nilai 2,415 (t hitung) dan 0,018 (Sig.)."
+    quads_post = extract_quad_tuples_from_sentence(sent_post, candidate_table_variables=["Likuiditas"])
+    post_map = {q.stat_type: q for q in quads_post}
+    assert "STAT_TEST" in post_map and abs(post_map["STAT_TEST"].numeric_value - 2.415) < 1e-6
+    assert "P_VALUE" in post_map and abs(post_map["P_VALUE"].numeric_value - 0.018) < 1e-6
+
+
+def test_cross_page_floating_table_resolution_and_discourse_reset():
+    """
+    2.6: Explicit reference to 'Tabel 4.3' pushed onto page+1 resolves across the page boundary,
+    while Layout-Aware Discourse Reset prevents leakage across a major sub-chapter heading.
+    """
+    from backend.layer2_core.cell_linker import CellLinker
+
+    t_4_2 = {
+        "table_id": "Tabel_4_2",
+        "normalized_id": "4.2",
+        "page": 4,
+        "y_bottom": 300.0,
+        "bbox": [50.0, 100.0, 500.0, 300.0],
+        "header_paths": ["Variabel", "Mean"],
+        "rows": [
+            [
+                {"row": 1, "col": 1, "row_label": "Profitabilitas", "raw_val": "Profitabilitas", "header_path": "Variabel", "num_val": None, "bbox": [50, 140, 200, 160]},
+                {"row": 1, "col": 2, "row_label": "Profitabilitas", "raw_val": "9,99", "header_path": "Mean", "num_val": 9.99, "bbox": [200, 140, 350, 160]},
+            ]
+        ],
+    }
+    # Floating Tabel 4.3 pushed by Word-to-PDF pagination to page 5
+    t_4_3 = {
+        "table_id": "Tabel_4_3",
+        "normalized_id": "Tabel_4_3",
+        "caption": "Tabel 4.3 Statistik Deskriptif Likuiditas",
+        "page": 5,
+        "y_bottom": 240.0,
+        "bbox": [50.0, 80.0, 500.0, 240.0],
+        "header_paths": ["Variabel", "Mean"],
+        "rows": [
+            [
+                {"row": 1, "col": 1, "row_label": "Likuiditas", "raw_val": "Likuiditas", "header_path": "Variabel", "num_val": None, "bbox": [50, 120, 200, 140]},
+                {"row": 1, "col": 2, "row_label": "Likuiditas", "raw_val": "1,48", "header_path": "Mean", "num_val": 1.48, "bbox": [200, 120, 350, 140]},
+            ]
+        ],
+    }
+
+    doc_graph = {
+        "document_id": "FLOAT-TBL-TEST",
+        "render_scale": 1.5,
+        "tables": [t_4_2, t_4_3],
+        "claims": [
+            {
+                "claim_id": "C_4_1",
+                "page": 4,
+                "claim_y_top": 620.0,
+                "scope_table_id": "Tabel_4_2",
+                "text": "Berdasarkan Tabel 4.3, variabel Likuiditas memiliki nilai rata-rata sebesar 1,48.",
+                "bbox": [50.0, 620.0, 480.0, 634.0],
+                "boxes": [[50.0, 620.0, 480.0, 634.0]],
+                "claim_rects": [[50.0, 620.0, 480.0, 634.0]],
+                "tok_boxes": [["1,48.", 440.0, 620.0, 475.0, 634.0]],
+            }
+        ],
+        "page_dimensions": {4: [595.0, 842.0, 0.0, 0.0], 5: [595.0, 842.0, 0.0, 0.0]},
+    }
+
+    linker = CellLinker()
+    bundle = linker.audit_document(doc_graph)
+    findings = bundle["findings"]
+    assert len(findings) >= 1
+    f0 = findings[0]
+    assert f0["verdict"] == "PASS_EXACT_MATCH"
+    assert f0["table_evidence"]["table_id"] == "Tabel_4_3"
+    assert f0["cell_page"] == 5
+    assert f0["claim_source"]["page"] == 4
+
+
+def test_likert_row_isolation_blocks_cumulative_and_valid_hijack():
+    """
+    2.6: In SPSS Likert tables, Cumulative Percent and Valid rows must never hijack
+    category Percent matches or target cell highlighting even when values are identical.
+    """
+    from src.core.spss_likert_engine import parse_spss_frequency_table
+    from backend.layer2_core.cell_linker import CellLinker
+
+    headers = ["", "Kategori", "Frequency", "Percent", "Valid Percent", "Cumulative Percent"]
+    rows = [
+        ["Valid", "Sangat Tidak Setuju", "5", "5.0", "5.0", "5.0"],
+        ["", "Tidak Setuju", "15", "15.0", "15.0", "20.0"],
+        ["", "Setuju", "50", "50.0", "50.0", "70.0"],
+        ["", "Sangat Setuju", "30", "30.0", "30.0", "100.0"],
+        ["", "Total", "100", "100.0", "100.0", ""],
+    ]
+    cleaned = parse_spss_frequency_table(headers, rows)
+    assert "VALID" not in cleaned
+    # Row 'S' (Setuju) Percent is 50.0, NOT Cumulative Percent 70.0
+    assert cleaned["S"].cells["PERCENT"] == 50.0
+    assert cleaned["S"].cells["CUMULATIVE_PERCENT"] == 70.0
+
+    # Claim wrongly quotes Cumulative Percent (70%) as Setuju Percent -> MUST detect contradiction
+    # and highlight the 'Setuju' row's 'Percent' cell (NOT 'Sangat Tidak Setuju' and NOT 'Cumulative Percent')!
+    tbl = {
+        "table_id": "Tabel_4_5",
+        "normalized_id": "4.5",
+        "page": 1,
+        "table_type": "SPSS_LIKERT_FREQ",
+        "bbox": [50.0, 80.0, 500.0, 240.0],
+        "header_paths": headers,
+        "rows": [
+            [
+                {"row": r_i + 1, "col": c_i + 1, "row_label": r[1], "raw_val": val, "header_path": headers[c_i],
+                 "num_val": float(val) if val.replace(".", "").isdigit() else None,
+                 "bbox": [50.0 + c_i * 70, 100.0 + r_i * 22, 115.0 + c_i * 70, 118.0 + r_i * 22],
+                 "cell_rect": [50.0 + c_i * 70, 100.0 + r_i * 22, 115.0 + c_i * 70, 118.0 + r_i * 22],
+                 "bbox_approx": False}
+                for c_i, val in enumerate(r)
+            ]
+            for r_i, r in enumerate(rows)
+        ],
+    }
+    linker = CellLinker()
+    findings = linker.link_claim_to_table(
+        {
+            "claim_id": "C_LIK_1",
+            "page": 1,
+            "claim_y_top": 300.0,
+            "text": "Berdasarkan Tabel 4.5, sebanyak 70% responden menyatakan setuju.",
+            "bbox": [50.0, 300.0, 400.0, 314.0],
+            "boxes": [[50.0, 300.0, 400.0, 314.0]],
+        },
+        [tbl],
+        page_dims={1: [595.0, 842.0, 0.0, 0.0]},
+    )
+    contra = [f for f in findings if f.get("verdict") == "DIRECT_CELL_CONTRADICTION"]
+    assert len(contra) == 1
+    ev_cells = contra[0]["table_evidence"]["cells"]
+    assert len(ev_cells) == 1
+    assert ev_cells[0]["row_label"] == "Setuju"
+    assert ev_cells[0]["header_path"] == "Percent"
+
+
+def test_audit_api_response_schema_has_new_and_legacy_fields():
+    """
+    2.6: /api/v1/audit response contract returns page_width_pt, page_height_pt, render_scale,
+    claim_rects, claim_source.value_rect, cell_page, cell_page_width_pt, cell_page_height_pt,
+    cell_rect, per-cell bbox_approx, while preserving all legacy fields.
+    """
+    from backend.layer1_perception.pdf_reader import FastPdfReader
+    from backend.layer2_core.cell_linker import CellLinker
+    from backend.main import AuditResponse, FindingContractItem
+
+    preset_pdf = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "data", "presets", "preset_1_ml_polarity.pdf",
+    )
+    assert os.path.exists(preset_pdf)
+
+    doc_graph = FastPdfReader.process_pdf(preset_pdf)
+    bundle = CellLinker().audit_document(doc_graph)
+
+    # Validate full AuditResponse & FindingContractItem schemas (same contract as /api/v1/audit)
+    validated_resp = AuditResponse.model_validate({
+        "status": "success",
+        "engine_version": "v3.5-grounded",
+        "elapsed_seconds": 0.1,
+        "readiness_score": 91.5,
+        "skipped_count": 0,
+        "pattern_summary": {"total_anomalies": len(bundle.get("findings", []))},
+        "document_sha256": "deadbeef",
+        "data": bundle,
+    })
+    payload = validated_resp.model_dump()
+    assert payload["status"] == "success"
+    bundle = payload["data"]
+    assert bundle.get("render_scale") == 1.5
+    assert "page_dimensions" in bundle and len(bundle["page_dimensions"]) >= 1
+
+    findings = bundle.get("findings", [])
+    assert len(findings) >= 1
+    f0 = FindingContractItem.model_validate(findings[0]).model_dump()
+
+    # New precision fields
+    for key in (
+        "page_width_pt",
+        "page_height_pt",
+        "render_scale",
+        "claim_rects",
+        "cell_page",
+        "cell_page_width_pt",
+        "cell_page_height_pt",
+        "cell_rect",
+    ):
+        assert key in f0, f"Missing required finding field: {key}"
+
+    assert f0["page_width_pt"] > 0 and f0["page_height_pt"] > 0
+    assert f0["render_scale"] == 1.5
+    assert isinstance(f0["claim_rects"], list) and len(f0["claim_rects"]) >= 1
+    assert "value_rect" in f0["claim_source"]
+
+    # Legacy backward-compatible fields still populated
+    assert "bbox" in f0["claim_source"]
+    assert "boxes" in f0["claim_source"]
+    assert "table_bbox_norm" in f0
+    for cell in f0["table_evidence"].get("cells", []):
+        assert "bbox" in cell
+        assert "bbox_approx" in cell
+
+
+
 

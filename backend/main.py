@@ -129,6 +129,14 @@ class FindingContractItem(BaseModel):
     stack_trace_path: str
     socratic_hints: List[str]
     table_bbox_norm: Optional[TableBboxNorm] = None
+    page_width_pt: Optional[float] = None
+    page_height_pt: Optional[float] = None
+    render_scale: Optional[float] = None
+    claim_rects: Optional[List[List[float]]] = None
+    cell_page: Optional[int] = None
+    cell_page_width_pt: Optional[float] = None
+    cell_page_height_pt: Optional[float] = None
+    cell_rect: Optional[List[float]] = None
     claim_source: Optional[Dict[str, Any]] = None
     table_evidence: Optional[Dict[str, Any]] = None
     diff_details: Optional[Dict[str, Any]] = None

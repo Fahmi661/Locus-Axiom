@@ -76,17 +76,18 @@ ROMAN_TO_INT: Dict[str, int] = {
 
 
 def normalize_table_id(text: str) -> Optional[str]:
-    """Mengubah 'Tabel IV.21', 'tabel 4.21', 'Tabel IV.3' menjadi ID kanonik '4.21', '4.3'."""
+    """Mengubah 'Tabel IV.21', 'tabel 4.21', 'Tabel_4_3', 'Tabel IV.3' menjadi ID kanonik '4.21', '4.3'."""
     if not text:
         return None
+    normalized_text = re.sub(r"_+", " ", str(text))
     m = re.search(
-        r"\b(?:tabel|table)\s+([IVX]+|\d+)\s*[.\-]\s*(\d+)\b",
-        text,
+        r"\b(?:tabel|table)\s+([IVX]+|\d+)\s*[.\-\s]\s*(\d+)\b",
+        normalized_text,
         flags=re.IGNORECASE,
     )
     if not m:
         # Juga tangani format satu digit misal 'Tabel 3' atau 'Tabel IV'
-        m_single = re.search(r"\b(?:tabel|table)\s+([IVX]+|\d+)\b", text, flags=re.IGNORECASE)
+        m_single = re.search(r"\b(?:tabel|table)\s+([IVX]+|\d+)\b", normalized_text, flags=re.IGNORECASE)
         if m_single:
             val_raw = m_single.group(1).upper()
             return str(ROMAN_TO_INT.get(val_raw, val_raw))
@@ -182,22 +183,28 @@ def resolve_table_with_ref_check(
                 )
                 local_table = prev_page_tables[-1]
 
-    # 2. Cari explicit_id dan explicit_table
+    # 2. Cari explicit_id dan explicit_table (termasuk cross-page floating table pada page+1 / page-1)
     explicit_id = normalize_table_id(sentence)
     explicit_table = None
     if explicit_id:
         candidates = []
         for t in all_tables:
             t_norm = t.get("normalized_id")
+            t_norm_canon = normalize_table_id(str(t_norm)) if t_norm else None
             t_num = str(t.get("table_num", "")).strip()
             t_id = t.get("table_id", "")
             t_cap = str(t.get("caption", ""))
-            if (t_norm == explicit_id or t_num == explicit_id
+            if (
+                t_norm == explicit_id
+                or t_norm_canon == explicit_id
+                or t_num == explicit_id
                 or normalize_table_id(t_id) == explicit_id
-                or (t_cap and normalize_table_id(t_cap) == explicit_id)):
+                or (t_cap and normalize_table_id(t_cap) == explicit_id)
+            ):
                 candidates.append(t)
         if candidates:
-            candidates.sort(key=lambda t: abs(t.get("page", 0) - claim_page))
+            # Prefer same page, then floating page+1 / page-1, then nearest page
+            candidates.sort(key=lambda t: (abs(int(t.get("page", 0)) - claim_page), 0 if int(t.get("page", 0)) >= claim_page else 1))
             explicit_table = candidates[0]
 
     # Cek apakah kalimat merupakan kalimat pengantar tabel di bawahnya
@@ -349,12 +356,15 @@ def is_spss_frequency_table(headers: List[str], rows: List[List[str]]) -> bool:
     for r in rows:
         if not r:
             continue
-        # Abaikan jika baris mengandung kode item seperti X1.1, X2.1, 1.1 atau teks pertanyaan panjang
+        # Abaikan jika kolom label (bukan kolom numerik persentase) mengandung kode item seperti X1.1, X2.1, Item 1
+        label_cells_to_check = [r[0]]
+        if len(r) > 1 and str(r[0]).strip().lower() in ("", "valid", "missing"):
+            label_cells_to_check.append(r[1])
         has_item_code = any(
-            re.search(r"\b(?:[a-zA-Z]{1,3}\d+(?:[.,]\d+)+|\d+\.\d+|item\s*\d+|indikator\s*\d+|pernyataan\s*\d+)\b", str(c).lower())
-            for c in r[:3]
+            re.search(r"\b(?:[a-zA-Z]{1,3}\d+(?:[.,]\d+)+|item\s*\d+|indikator\s*\d+|pernyataan\s*\d+)\b", str(c).lower())
+            for c in label_cells_to_check
         )
-        is_long_statement = any(len(str(c).strip().split()) >= 4 for c in r[:2])
+        is_long_statement = any(len(str(c).strip().split()) >= 4 for c in label_cells_to_check)
         if has_item_code or is_long_statement:
             continue
 
@@ -372,7 +382,8 @@ def is_spss_frequency_table(headers: List[str], rows: List[List[str]]) -> bool:
         if row_has_likert:
             likert_rows_count += 1
 
-    return likert_rows_count >= 2
+    min_required = 1 if len(rows) == 1 else 2
+    return likert_rows_count >= min_required
 
 
 def parse_spss_frequency_table(headers: List[str], rows: List[List[str]]) -> Dict[str, CleanedSPSSRow]:
@@ -418,24 +429,27 @@ def parse_spss_frequency_table(headers: List[str], rows: List[List[str]]) -> Dic
             except ValueError:
                 non_numeric_cells.append((c_idx, c_str))
 
-        # Determine row label: non-numeric cell that is NOT "valid" or "missing"
+        # Determine row label: non-numeric cell that is NOT "valid", "missing", "system", or "cumulative"
         raw_label = ""
+        ignored_stub_labels = ("valid", "missing", "system", "cumulative", "cumulative percent")
         for _, cell_text in non_numeric_cells:
             t_low = cell_text.lower().strip()
-            if t_low not in ("valid", "missing"):
+            if t_low not in ignored_stub_labels:
                 raw_label = cell_text.strip()
                 break
 
         # Fallback for label if all cells were numeric or empty (e.g. Likert code "1", "2")
         if not raw_label:
             if non_numeric_cells:
-                raw_label = non_numeric_cells[0][1].strip()
+                cand_lbl = non_numeric_cells[0][1].strip()
+                if cand_lbl.lower() not in ignored_stub_labels:
+                    raw_label = cand_lbl
             elif numeric_cells and len(numeric_cells) > 4:
                 # First numeric cell could be the label (e.g. 1, 2, 3, 4, 5)
                 raw_label = str(int(numeric_cells[0][2]))
                 numeric_cells = numeric_cells[1:]
 
-        if not raw_label or raw_label.lower() in ("valid", "missing"):
+        if not raw_label or raw_label.lower() in ignored_stub_labels:
             continue
 
         label_lower = raw_label.lower().strip()
@@ -448,55 +462,64 @@ def parse_spss_frequency_table(headers: List[str], rows: List[List[str]]) -> Dic
         cells_val: Dict[str, float] = {}
         cells_raw: Dict[str, str] = {}
 
-        # Right-Aligned Numeric Column Binding strategy:
-        # Standard SPSS frequency table has up to 4 numeric metrics:
-        # Frequency, Percent, Valid Percent, Cumulative Percent
-        num_k = len(numeric_cells)
-        if num_k >= 4:
-            # Rightmost 4 numeric cells
-            cum_cell = numeric_cells[-1]
-            val_pct_cell = numeric_cells[-2]
-            pct_cell = numeric_cells[-3]
-            freq_cell = numeric_cells[-4]
+        # Prefer exact header-indexed binding when row columns align with mapped headers
+        # so Cumulative Percent can NEVER hijack Percent/Valid Percent even when values are identical.
+        if col_map and len(r) == len(headers):
+            for c_idx, c_str, val in numeric_cells:
+                mapped_role = col_map.get(c_idx)
+                if mapped_role and mapped_role not in cells_val:
+                    cells_val[mapped_role] = val
+                    cells_raw[mapped_role] = c_str
 
-            cells_val["CUMULATIVE_PERCENT"] = cum_cell[2]
-            cells_raw["CUMULATIVE_PERCENT"] = cum_cell[1]
+        # Fallback: Right-Aligned Numeric Column Binding when columns are shifted (e.g. merged 'Valid' stub)
+        if not cells_val or ("FREQUENCY" not in cells_val and "PERCENT" not in cells_val):
+            cells_val = {}
+            cells_raw = {}
+            num_k = len(numeric_cells)
+            if num_k >= 4:
+                cum_cell = numeric_cells[-1]
+                val_pct_cell = numeric_cells[-2]
+                pct_cell = numeric_cells[-3]
+                freq_cell = numeric_cells[-4]
 
-            cells_val["VALID_PERCENT"] = val_pct_cell[2]
-            cells_raw["VALID_PERCENT"] = val_pct_cell[1]
+                cells_val["CUMULATIVE_PERCENT"] = cum_cell[2]
+                cells_raw["CUMULATIVE_PERCENT"] = cum_cell[1]
 
-            cells_val["PERCENT"] = pct_cell[2]
-            cells_raw["PERCENT"] = pct_cell[1]
+                cells_val["VALID_PERCENT"] = val_pct_cell[2]
+                cells_raw["VALID_PERCENT"] = val_pct_cell[1]
 
-            cells_val["FREQUENCY"] = freq_cell[2]
-            cells_raw["FREQUENCY"] = freq_cell[1]
-        elif num_k == 3:
-            # Often Total row: Frequency, Percent, Valid Percent (no cumulative)
-            val_pct_cell = numeric_cells[-1]
-            pct_cell = numeric_cells[-2]
-            freq_cell = numeric_cells[-3]
+                cells_val["PERCENT"] = pct_cell[2]
+                cells_raw["PERCENT"] = pct_cell[1]
 
-            cells_val["VALID_PERCENT"] = val_pct_cell[2]
-            cells_raw["VALID_PERCENT"] = val_pct_cell[1]
+                cells_val["FREQUENCY"] = freq_cell[2]
+                cells_raw["FREQUENCY"] = freq_cell[1]
+            elif num_k == 3:
+                # Often Total row: Frequency, Percent, Valid Percent (no cumulative)
+                val_pct_cell = numeric_cells[-1]
+                pct_cell = numeric_cells[-2]
+                freq_cell = numeric_cells[-3]
 
-            cells_val["PERCENT"] = pct_cell[2]
-            cells_raw["PERCENT"] = pct_cell[1]
+                cells_val["VALID_PERCENT"] = val_pct_cell[2]
+                cells_raw["VALID_PERCENT"] = val_pct_cell[1]
 
-            cells_val["FREQUENCY"] = freq_cell[2]
-            cells_raw["FREQUENCY"] = freq_cell[1]
-        elif num_k == 2:
-            # Frequency, Percent
-            pct_cell = numeric_cells[-1]
-            freq_cell = numeric_cells[-2]
+                cells_val["PERCENT"] = pct_cell[2]
+                cells_raw["PERCENT"] = pct_cell[1]
 
-            cells_val["PERCENT"] = pct_cell[2]
-            cells_raw["PERCENT"] = pct_cell[1]
+                cells_val["FREQUENCY"] = freq_cell[2]
+                cells_raw["FREQUENCY"] = freq_cell[1]
+            elif num_k == 2:
+                # Frequency, Percent
+                pct_cell = numeric_cells[-1]
+                freq_cell = numeric_cells[-2]
 
-            cells_val["FREQUENCY"] = freq_cell[2]
-            cells_raw["FREQUENCY"] = freq_cell[1]
-        elif num_k == 1:
-            cells_val["FREQUENCY"] = numeric_cells[0][2]
-            cells_raw["FREQUENCY"] = numeric_cells[0][1]
+                cells_val["PERCENT"] = pct_cell[2]
+                cells_raw["PERCENT"] = pct_cell[1]
+
+                cells_val["FREQUENCY"] = freq_cell[2]
+                cells_raw["FREQUENCY"] = freq_cell[1]
+            elif num_k == 1:
+                cells_val["FREQUENCY"] = numeric_cells[0][2]
+                cells_raw["FREQUENCY"] = numeric_cells[0][1]
 
         if cells_val:
             cleaned_rows[canonical_code] = CleanedSPSSRow(
