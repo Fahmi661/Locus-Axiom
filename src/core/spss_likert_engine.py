@@ -46,9 +46,9 @@ LIKERT_TEXT_TO_CODE: List[Tuple[str, List[str]]] = [
         r"\bs\b",
     ]),
     ("TOTAL", [
-        r"\btotal\s+responden\b",
-        r"\bjumlah\s+keseluruhan\b",
-        r"\btotal\b",
+        r"(?<!dari\s)(?<!seluruh\s)\btotal\s+responden\b",
+        r"(?<!dari\s)(?<!seluruh\s)\bjumlah\s+keseluruhan\b",
+        r"(?<!dari\s)(?<!seluruh\s)\btotal\s+keseluruhan\b",
     ]),
 ]
 
@@ -366,12 +366,17 @@ def is_spss_frequency_table(headers: List[str], rows: List[List[str]]) -> bool:
 
     hl = [str(h).lower().strip() for h in headers]
 
-    # 1. Kembalikan False jika header mengandung kolom rata-rata/statistik kontinu
-    has_continuous_stat = any(
-        re.search(r"\b(?:mean|rata[\s\-]+rata|rerata|std|deviasi|grand\s+mean)\b", h)
+    # 1. Kembalikan False jika header mengandung kolom rata-rata/statistik kontinu ATAU tabel demografi responden
+    has_continuous_or_demo = any(
+        re.search(
+            r"\b(?:mean|rata[\s\-]+rata|rerata|std|deviasi|grand\s+mean|"
+            r"usia|umur|jenis\s+kelamin|gender|pendidikan|lama\s+bekerja|masa\s+kerja|"
+            r"jabatan|pekerjaan|penghasilan|pendapatan|jurusan|fakultas|program\s+studi)\b",
+            h,
+        )
         for h in hl
     )
-    if has_continuous_stat:
+    if has_continuous_or_demo:
         return False
 
     # 2. Kembalikan False jika header itu sendiri berisi >= 2 kategori skala Likert (Matrix Horizontal)

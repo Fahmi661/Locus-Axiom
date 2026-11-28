@@ -249,9 +249,9 @@ def parse_academic_number(raw: str) -> Optional[Tuple[float, int, bool]]:
 
 
 def normalize_variable_stem(name: str) -> str:
-    """Mengupas prefiks nomor model SPSS ('1 :: '), kode variabel regresi (X1_, X2_, Y_, Z_), transformasi SPSS (SQRT, LN, LOG) dan kata umum."""
+    """Mengupas prefiks nomor model/konstanta SPSS ('1 :: ', 'Model - ', '(Constant) :: '), kode variabel regresi, dan transformasi SPSS."""
     s = re.sub(r"\s+", " ", name.replace("\n", " ")).lower().strip()
-    s = re.sub(r"^(?:\d+\s*::\s*)+", "", s)
+    s = re.sub(r"^(?:(?:\d+|model|\(?constant\)?)\s*(?:::|-)\s*)+", "", s)
     s = re.sub(r"\([^)]*\)", " ", s)
     s = re.sub(
         r"^(?:[xyz]\d*[_\-\s\.]+|variabel\s+|variable\s+|sqrt[_\s]*|ln[_\s]*|log10[_\s]*|log[_\s]*|abs[_\s]*|zscore[_\s]*)+",
@@ -313,6 +313,11 @@ def classify_column_header(col_header: str) -> Tuple[Optional[str], float]:
     # Prioritaskan leaf segment pada multi-tier header (mis. 'Coefficients :: t', 'Descriptive Statistics :: N')
     segments = [seg.strip() for seg in h_clean.split("::") if seg.strip()]
     leaf = segments[-1] if segments else h_clean
+
+    # Tolak kolom nilai kritis tabel ('r tabel (taraf sig 5%)', 't tabel', 'F tabel', 'nilai kritis')
+    # agar tidak pernah membajak P_VALUE ('sig') maupun CORRELATION/STAT_TEST empiris!
+    if re.search(r"\b(?:[rtfz]\s*[-_]?\s*(?:tabel|table)|nilai\s+kritis|critical\s+value)\b", leaf):
+        return None, 0.0
 
     for target in (leaf, h_clean):
         for stat_type, synonyms in COLUMN_HEADER_SYNONYMS.items():
@@ -493,15 +498,30 @@ def extract_quad_tuples_from_sentence(
         contrast_splits.append(cm.start())
     contrast_splits.append(len(s_norm))
 
-    # 3. Ekstrak semua token numerik (kecuali nomor Tabel/Bab/Halaman seperti 'Tabel 4.2' dan penomoran sub-bab)
+    # 3. Ekstrak semua token numerik (kecuali nomor Tabel/Bab/Halaman termasuk angka Romawi seperti 'Tabel IV.59', 'Tabel IV-1')
     ignored_spans: List[Tuple[int, int]] = []
-    for m in re.finditer(r"\b(?:tabel|table|gambar|bab|halaman|hal\.?|lampiran|persamaan|uji|model)\s+\d+(?:[.,]\d+)*", s_lower):
+    for m in re.finditer(
+        r"\b(?:tabel|table|gambar|grafik|bagan|bab|halaman|hal\.?|lampiran|persamaan|uji|model)\s+(?:[ivx]+\s*[.,\-]\s*)?\d+(?:[.,\-]\d+)*",
+        s_lower,
+    ):
         ignored_spans.append((m.start(), m.end()))
     for m in re.finditer(r"\b\d+(?:\.\d+){2,}\b", s_lower):
         ignored_spans.append((m.start(), m.end()))
     for m in re.finditer(r"^\s*\d+(?:\.\d+)+\s+", s_lower):
         ignored_spans.append((m.start(), m.end()))
     for m in re.finditer(r"(?:^|\s)\d+\)\s+", s_lower):
+        ignored_spans.append((m.start(), m.end()))
+    # Critical table threshold values with or without parentheses: e.g. 't tabel (1,960)', 'F tabel = 2,68', 'r tabel 0,196'
+    for m in re.finditer(
+        r"\b(?:[tfzr]|chi[\s\-]*square|χ²)\s*[-_]?\s*(?:tabel|table|kritis)\s*(?:sebesar|adalah|=|:)?\s*\(?\s*[+-]?\d+(?:[.,]\d+)?\s*\)?",
+        s_lower,
+    ):
+        ignored_spans.append((m.start(), m.end()))
+    # Panel data cross-section firm counts ('terdiri dari 20 perusahaan', '20 perusahaan selama 4 tahun')
+    for m in re.finditer(
+        r"(?:terdiri\s+dari|berasal\s+dari)\s+\d+\s+perusahaan\b|\b\d+\s+perusahaan\s+selama\s+\d+\s+tahun\b",
+        s_lower,
+    ):
         ignored_spans.append((m.start(), m.end()))
     for m in re.finditer(
         r"(?:\(\s*[a-zA-Z]{1,3}\s*\d+(?:[.,]\d+)*\s*\)|\b(?:[xyz]|item|indikator|hipotesis|h|k|spss|iso|d|s)\s*[\.\-]?\s*\d+(?:[.,]\d+)*\b|\b[xyz]\d+(?:\.\d+)+\b|\b\d+\s*[sS]\b)",
@@ -516,6 +536,7 @@ def extract_quad_tuples_from_sentence(
         ignored_spans.append((m.start(), m.end()))
 
     quad_tuples: List[ClaimQuadTuple] = []
+    quad_group_meta: List[Tuple[int, Optional[Tuple[int, int]], int]] = []
     # Track previously bound (num_end, stat_span) for strict local token binding in compound sentences
     prev_num_end = 0
     consumed_stat_spans: set = set()
@@ -547,12 +568,14 @@ def extract_quad_tuples_from_sentence(
 
         # Abaikan angka ambang batas baku (0.05, 0.01, 0.10, 0.1, 10.0, 5%) jika didahului penanda pembanding atau kriteria uji
         if round(val, 4) in (0.05, 0.01, 0.1, 10.0) or (is_pct and round(val, 4) in (5.0, 1.0, 10.0)):
-            left_65 = s_lower[max(0, c_start - 65):c_start]
+            left_75 = s_lower[max(0, c_start - 75):c_start]
             if re.search(
-                r"(?:lebih\s+besar(?:\s+dari)?|lebih\s+kecil(?:\s+dari)?|di\s*atas|di\s*bawah|kurang\s+dari|melebihi|"
-                r"alpha|α|taraf\s+signifikansi|tingkat\s+signifikansi|taraf\s+nyata|tingkat\s+kesalahan|batas\s+kritis|ambang|"
-                r">=|<=|>|<)(?:\s*\([^)]{0,15}\))?\s*(?:pada|sebesar|adalah|yaitu|yakni|di|untuk|=)?\s*$",
-                left_65,
+                r"(?:(?:lebih\s+besar|lebih\s+kecil|jauh\s+melebihi|melebihi|melampaui|kurang\s+dari|di\s*atas|di\s*bawah|>=|<=|>|<)"
+                r"(?:\s+dari)?(?:\s+(?:nilai|batas|taraf|tingkat))?(?:\s+(?:signifikansi|sig\.?|alpha|α|probabilitas))?"
+                r"|(?:alpha|α|taraf\s+signifikansi|tingkat\s+signifikansi|taraf\s+nyata|tingkat\s+kesalahan|batas\s+kritis|ambang"
+                r"|(?:pada|dengan|menggunakan|standar|batas|ketentuan)\s+(?:nilai\s+)?signifikansi))"
+                r"(?:\s*\([^)]{0,15}\))?\s*(?:pada|sebesar|adalah|yaitu|yakni|di|untuk|=)?\s*$",
+                left_75,
             ):
                 continue
 
@@ -611,8 +634,13 @@ def extract_quad_tuples_from_sentence(
                         if (st_start, st_end) in consumed_stat_spans:
                             after_prev = s_norm[prev_num_end:c_start].lower() if prev_num_end >= st_end else between_text.lower()
                             is_appositive = bool(re.search(r"\b(?:yaitu|yakni|adalah|sebesar)\b", after_prev))
+                            # Pure coordinating connector ('41,90 dan 41,53') with NO new stat keyword in between
+                            # and NO tight_right_stat ('0,018 (Sig.)') shares the same left statistic ('rata-rata')!
+                            is_pure_coord_pair = bool(
+                                re.match(r"^\s*(?:,\s*(?:dan|serta)?|(?:dan|serta|maupun))\s*$", after_prev)
+                            )
                             has_coord = bool(re.search(r"\b(?:dan|dengan|serta|sedangkan)\b|,", after_prev))
-                            if tight_right_stat is not None or (has_coord and not is_appositive):
+                            if tight_right_stat is not None or (has_coord and not is_appositive and not is_pure_coord_pair):
                                 continue
                         if dist < best_dist:
                             best_dist = dist
@@ -631,10 +659,20 @@ def extract_quad_tuples_from_sentence(
                     best_stat = tight_right_stat
                     chosen_stat_span = tight_right_span
 
+        # Cek post-nominal sample count khas Indonesia ('100 responden', '57 buah sampel') sebelum fallback kanan jauh
+        # (Wajib bukan persentase 'is_pct=False', agar '27,95% responden' tetap menjadi PERCENTAGE, bukan N!)
+        if best_stat is None and not is_pct:
+            right_n_ctx = s_lower[c_end:min(len(s_lower), c_end + 32)]
+            if re.match(r"^\s*(?:buah\s+|orang\s+|data\s+)?(?:sampel|responden|observasi|subjek)\b", right_n_ctx):
+                best_stat = "N"
+
         # Jika di sebelah kiri belum ada, cari di sebelah kanan (kalimat pasif/inversi: "sebesar X tercatat sebagai Y")
         if best_stat is None:
             best_dist = 9999
-            blocked_right_words = ("artinya", "yaitu", "dapat", "selisih", "dibanding", "sedangkan", "sehingga", "karena")
+            blocked_right_words = (
+                "artinya", "yaitu", "dapat", "selisih", "dibanding", "sedangkan",
+                "sehingga", "karena", "dengan", "diketahui", "menunjukkan", "memiliki", "memperoleh",
+            )
             for st_start, st_end, st_type in stat_mentions:
                 if st_start >= c_end:
                     dist = st_start - c_end
@@ -656,6 +694,11 @@ def extract_quad_tuples_from_sentence(
             best_stat = "SUM"
 
         if best_stat is None:
+            continue
+
+        # Kolom Sig./p-value SPSS selalu berupa desimal probabilitas [0, 1], TIDAK PERNAH ditulis '5%' / '1%' / '10%'!
+        # Persentase seperti '5%' yang terikat ke P_VALUE pasti merupakan taraf kesalahan alpha (α = 5%).
+        if best_stat == "P_VALUE" and is_pct and round(val, 4) in (1.0, 5.0, 10.0):
             continue
 
         prev_num_end = c_end
@@ -747,6 +790,37 @@ def extract_quad_tuples_from_sentence(
                 extraction_confidence=0.95,
             )
         )
+        quad_group_meta.append((cur_clause_start, chosen_stat_span, c_start))
+
+    # Deterministic Parallel ('masing-masing' / coordinated list) Variable Pairing:
+    # e.g. "Disiplin kerja dan kinerja karyawan memiliki rata-rata masing-masing 41,90 dan 41,53 dengan standar deviasi 4,505 dan 4,343"
+    # When K >= 2 consecutive quads share the exact same (clause_start, stat_span) and K distinct variables
+    # precede that group in the same clause, pair the i-th number with the i-th variable (1-to-1).
+    idx_g = 0
+    while idx_g < len(quad_tuples):
+        cl_s, st_sp, first_c_start = quad_group_meta[idx_g]
+        if st_sp is None:
+            idx_g += 1
+            continue
+        end_g = idx_g + 1
+        while (
+            end_g < len(quad_tuples)
+            and quad_group_meta[end_g][0] == cl_s
+            and quad_group_meta[end_g][1] == st_sp
+        ):
+            end_g += 1
+        group_len = end_g - idx_g
+        if group_len >= 2:
+            # Ordered distinct variables appearing before first_c_start in this clause
+            ordered_vars: List[str] = []
+            for v_s, v_e, v_nm in main_var_mentions:
+                if cl_s <= v_s and v_e <= first_c_start:
+                    if v_nm not in ordered_vars:
+                        ordered_vars.append(v_nm)
+            if len(ordered_vars) == group_len:
+                for k_i in range(group_len):
+                    quad_tuples[idx_g + k_i].variable_name = ordered_vars[k_i]
+        idx_g = end_g
 
     # 4. Hybrid Fallback: Jika aturan deterministik belum mengikat statistik
     # Dipanggil hanya jika eksplisit diaktifkan via env LOCUS_ENABLE_GLINER=1 agar audit tetap instan (<4 detik)
@@ -1140,8 +1214,17 @@ def verify_quad_tuple_against_table(
         s_text_lower = getattr(quad, "sentence_text", "").lower()
 
         scored_candidates: List[Tuple[int, str, float]] = []
+        raw_num_pos = s_text_lower.find(str(quad.raw_number_str).lower())
+        local_stat_win = (
+            s_text_lower[max(0, raw_num_pos - 45):min(len(s_text_lower), raw_num_pos + len(str(quad.raw_number_str)) + 25)]
+            if raw_num_pos != -1 else s_text_lower
+        )
+        wants_f_test = bool(re.search(r"\b(?:f[\s\-]*hitung|uji\s+f|simultan)\b", local_stat_win) or ("simultan" in s_text_lower and "parsial" not in local_stat_win))
+        wants_t_test = bool(re.search(r"\b(?:t[\s\-]*hitung|uji\s+t|parsial)\b", local_stat_win))
+
         for c_idx, col_name, c_score in col_candidates:
             c_lower = col_name.lower()
+            c_leaf = c_lower.split("::")[-1].strip()
             bonus = 0.0
             for kw in DIFF_KEYWORDS:
                 if re.search(rf"\b{re.escape(kw)}\b", c_lower) and re.search(rf"\b{re.escape(kw)}\b", s_text_lower):
@@ -1151,6 +1234,17 @@ def verify_quad_tuple_against_table(
                     bonus -= 0.50
                 elif re.search(rf"\b{re.escape(k2)}\b", c_lower) and re.search(rf"\b{re.escape(k1)}\b", s_text_lower) and not re.search(rf"\b{re.escape(k2)}\b", s_text_lower):
                     bonus -= 0.50
+            if quad.stat_type == "STAT_TEST":
+                is_f_col = bool(c_leaf in ("f", "f hitung", "f-hitung") or re.search(r"\bf[\s\-]*hitung\b", c_leaf))
+                is_t_col = bool(c_leaf in ("t", "t hitung", "t-hitung") or re.search(r"\bt[\s\-]*hitung\b", c_leaf))
+                if wants_f_test and is_f_col:
+                    bonus += 0.60
+                elif wants_f_test and is_t_col:
+                    bonus -= 0.60
+                elif wants_t_test and is_t_col:
+                    bonus += 0.60
+                elif wants_t_test and is_f_col:
+                    bonus -= 0.60
             scored_candidates.append((c_idx, col_name, c_score + bonus))
 
         # Jika masih ada kandidat kolom lain bertipe sama yang nilai selnya pada target_row
@@ -1285,6 +1379,22 @@ def verify_quad_tuple_against_table(
         is_claim_pct=quad.is_percentage,
         stat_type=quad.stat_type,
     )
+
+    # Signed Verbal Magnitude Equivalence:
+    # e.g. "terjadi penurunan sebesar 0,67% (ditunjukkan tanda minus)" vs table cell "-0,67%"
+    if verdict == "VALUE_MISMATCH" and cell_val < 0 and quad.numeric_value > 0:
+        s_ctx_low = getattr(quad, "sentence_text", "").lower()
+        if re.search(r"\b(?:penurunan|menurun|berkurang|turun|negatif|minus|defisit|rugi)\b", s_ctx_low):
+            neg_v, neg_eff, neg_lb, neg_ub = check_rounding_and_truncation(
+                claim_val=-quad.numeric_value,
+                claim_decimals=quad.decimal_places,
+                cell_val=cell_val,
+                cell_decimals=cell_dec,
+                is_claim_pct=quad.is_percentage,
+                stat_type=quad.stat_type,
+            )
+            if neg_v in ("VALID_EXACT", "VALID_ROUNDED"):
+                verdict, eff_cell_val, low_b, high_b = neg_v, neg_eff, neg_lb, neg_ub
 
     if verdict in ("VALID_EXACT", "VALID_ROUNDED"):
         return QuadVerificationResult(

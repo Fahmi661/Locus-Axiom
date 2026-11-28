@@ -274,10 +274,131 @@ def test_real_bab4_pdf_zero_false_stitched_fatal_errors():
 
     bundle = CellLinker().audit_document(doc_graph)
     findings = bundle["findings"]
-    # Tabel IV.8 (Hal. 6: S=48, SS=33) and Tabel IV.10 (Hal. 7-8: S=45, SS=43) must have ZERO false fatal contradictions!
-    false_fatals_t8_t10 = [
+    # Tabel IV.8 (Hal. 6: S=48, SS=33), Tabel IV.10 (Hal. 7-8: S=45, SS=43),
+    # AND Tabel IV.5 Statistik Deskriptif (Hal. 4: N=100, Mean=40.90/39.99/41.90/41.53)
+    # must have ZERO false fatal errors across the entire 53-page thesis!
+    fatal_errors = [
         f for f in findings
-        if f.get("verdict") == "DIRECT_CELL_CONTRADICTION"
-        and f.get("table_evidence", {}).get("table_id") in ("Tabel_4_8", "Tabel_4_10")
+        if f.get("verdict") not in ("PASS_EXACT_MATCH", "TABLE_REFERENCE_TYPO")
+        and "WARN" not in f.get("verdict", "")
     ]
-    assert len(false_fatals_t8_t10) == 0, f"False fatal contradictions on Tabel_4_8/Tabel_4_10: {false_fatals_t8_t10}"
+    assert len(fatal_errors) == 0, f"Expected 0 false fatal errors across bab4.pdf, got: {fatal_errors}"
+
+
+def test_multitier_grim_n100_and_parallel_masing_masing_clause():
+    """
+    Verifies the exact Tabel IV.5 Statistik Deskriptif case:
+    1. 'Descriptive Statistics :: N' = 100 is read accurately (no false GRIM N=15 on 40,90 or 39,99).
+    2. Parallel 'Disiplin kerja dan kinerja karyawan memiliki rata-rata masing-masing 41,90 dan 41,53
+       dengan standar deviasi 4,505 dan 4,343' binds 41,90->Disiplin Kerja.MEAN, 41,53->Kinerja Karyawan.MEAN,
+       4,505->Disiplin Kerja.STD, 4,343->Kinerja Karyawan.STD with 0 COLUMN_SWAP_ERROR.
+    3. make_highlighted_clause never slices inside Indonesian decimal commas ('41,90', '4,646').
+    """
+    from backend.layer2_core.cell_linker import make_highlighted_clause
+
+    tbl_desc = {
+        "table_id": "Tabel_4_5",
+        "normalized_id": "4.5",
+        "caption": "Tabel IV.5 Statistik Deskriptif",
+        "page": 4,
+        "y_bottom": 420.0,
+        "bbox": [60.0, 220.0, 520.0, 420.0],
+        "table_type": "DESCRIPTIVE_STATS",
+        "header_paths": [
+            "Descriptive Statistics",
+            "Descriptive Statistics :: N",
+            "Descriptive Statistics :: Minimum",
+            "Descriptive Statistics :: Maximum",
+            "Descriptive Statistics :: Mean",
+            "Descriptive Statistics :: Std. Deviation",
+        ],
+        "rows": [
+            [
+                {"row": r_i + 1, "col": c_i + 1, "row_label": r[0], "raw_val": val,
+                 "header_path": [
+                     "Descriptive Statistics",
+                     "Descriptive Statistics :: N",
+                     "Descriptive Statistics :: Minimum",
+                     "Descriptive Statistics :: Maximum",
+                     "Descriptive Statistics :: Mean",
+                     "Descriptive Statistics :: Std. Deviation",
+                 ][c_i],
+                 "num_val": float(val.replace(",", ".")) if c_i > 0 else None}
+                for c_i, val in enumerate(r)
+            ]
+            for r_i, r in enumerate([
+                ["Budaya Organisasi", "100", "28", "48", "40,90", "4,646"],
+                ["Kompensasi", "100", "21", "49", "39,99", "5,795"],
+                ["Disiplin Kerja", "100", "28", "49", "41,90", "4,505"],
+                ["Kinerja Karyawan", "100", "30", "49", "41,53", "4,343"],
+            ])
+        ],
+    }
+
+    doc_graph = {
+        "document_id": "DESC-IV5-TEST",
+        "detected_total_n": 15,  # Deliberate bogus global N=15 trap! Must NOT override row N=100!
+        "tables": [tbl_desc],
+        "claims": [
+            {
+                "claim_id": "C_4_1",
+                "page": 4,
+                "claim_y_top": 450.0,
+                "scope_table_id": "Tabel_4_5",
+                "text": "Berdasarkan statistik deskriptif untuk 100 responden, budaya organisasi memiliki nilai rata-rata 40,90 dengan standar deviasi 4,646, menunjukkan variasi yang moderat.",
+            },
+            {
+                "claim_id": "C_4_2",
+                "page": 4,
+                "claim_y_top": 480.0,
+                "scope_table_id": "Tabel_4_5",
+                "text": "Kompensasi memiliki rata-rata 39,99 dan standar deviasi 5,795, menunjukkan variasi yang lebih besar dibandingkan dengan variabel lain.",
+            },
+            {
+                "claim_id": "C_4_3",
+                "page": 4,
+                "claim_y_top": 510.0,
+                "scope_table_id": "Tabel_4_5",
+                "text": "Disiplin kerja dan kinerja karyawan memiliki rata-rata masing-masing 41,90 dan 41,53 dengan standar deviasi 4,505 dan 4,343, menunjukkan variasi yang relatif rendah.",
+            },
+        ],
+        "page_dimensions": {4: [595.0, 842.0, 0.0, 0.0]},
+    }
+
+    bundle = CellLinker().audit_document(doc_graph)
+    fatals = [f for f in bundle["findings"] if f.get("verdict") != "PASS_EXACT_MATCH"]
+    assert len(fatals) == 0, f"Expected 0 false positives on Tabel IV.5, got: {fatals}"
+    passes = [f for f in bundle["findings"] if f.get("verdict") == "PASS_EXACT_MATCH"]
+    assert len(passes) >= 8, f"Expected all 8 mean/std values to verify as PASS_EXACT_MATCH, got {len(passes)}"
+
+    # Quote slicer must never cut inside decimal commas ('41,90' or '4,646')
+    hl = make_highlighted_clause(
+        "Disiplin kerja dan kinerja karyawan memiliki rata-rata masing-masing 41,90 dan 41,53 dengan standar deviasi 4,505 dan 4,343, menunjukkan variasi yang relatif rendah.",
+        "41,53",
+    )
+    assert "41,90" in hl and "4,505" in hl and "4,343" in hl
+
+
+def test_parenthesized_t_tabel_and_verbal_negative_magnitude():
+    """
+    Verifies:
+    1. Parenthesized critical thresholds 't tabel (1,960)' are ignored and never flagged as STAT_TEST mismatch.
+    2. Verbal negative delta 'terjadi penurunan sebesar 0,67%' matches cell '-0,67%' cleanly.
+    """
+    from src.core.quad_tuple_verifier import verify_quad_tuple_against_table
+
+    sent_ttab = "Diketahui pula, nilai Sig. Z1 (0,898) > 0,05 dan nilai t hitung (-0,129) < t tabel (1,960) maka H0 diterima."
+    quads = extract_quad_tuples_from_sentence(sent_ttab, candidate_table_variables=["(Constant) :: Z1"])
+    vals = [round(q.numeric_value, 4) for q in quads]
+    assert 1.96 not in vals and 0.05 not in vals, f"Critical thresholds leaked: {quads}"
+
+    sent_neg = "Pada kelas kontrol terjadi penurunan kesiapan kerja sebesar 0,67% yang ditunjukkan dengan tanda minus."
+    q_neg = extract_quad_tuples_from_sentence(sent_neg, candidate_table_variables=["Kontrol"])
+    assert len(q_neg) == 1
+    res = verify_quad_tuple_against_table(
+        q_neg[0],
+        ["Kelas", "Persentase Perbedaan"],
+        [["Kontrol", "-0,67%"]],
+    )
+    assert res.status == "VALID_EXACT", f"Expected VALID_EXACT for verbal negative magnitude, got {res.status}"
+

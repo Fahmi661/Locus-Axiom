@@ -119,17 +119,18 @@ def find_value_rect_in_claim(claim: Optional[Dict[str, Any]], value_display: Opt
 
 
 def make_highlighted_clause(sentence: str, target_val: str, category: Optional[str] = None) -> str:
-    """Wraps the problematic sub-clause in <mark> tags."""
+    """Wraps the problematic sub-clause in <mark> tags without splitting inside Indonesian decimal commas (e.g. '41,90')."""
     if not sentence:
         return ""
     if target_val and target_val in sentence:
         idx = sentence.find(target_val)
-        start = max(0, sentence.rfind(",", 0, idx) + 1)
-        end = sentence.find(",", idx + len(target_val))
-        if end == -1:
-            end = len(sentence)
+        # Split strictly on clause separators (comma/semicolon followed by whitespace), NEVER inside '41,90'
+        left_seps = [m.end() for m in re.finditer(r"[,;]\s+", sentence[:idx])]
+        start = left_seps[-1] if left_seps else 0
+        right_m = re.search(r"[,;]\s+", sentence[idx + len(target_val):])
+        end = (idx + len(target_val) + right_m.start()) if right_m else len(sentence)
         clause = sentence[start:end].strip()
-        return clause.replace(target_val, f"<mark>{target_val}</mark>")
+        return clause.replace(target_val, f"<mark>{target_val}</mark>", 1)
     if target_val:
         return f"<mark>{target_val}</mark>"
     return sentence
@@ -2045,6 +2046,11 @@ class CellLinker:
                         elif q_res.status in ("COLUMN_SWAP_ERROR", "VALUE_MISMATCH", "TRUNCATION_WARNING"):
                             # Defense Gate: Jika pasangan (variabel, stat) ini sudah memiliki quad yang VALID
                             if pair_key in verified_pairs:
+                                if quad.stat_type == "N":
+                                    # Pada sampel/panel data ('N = 80 terdiri dari 20 perusahaan' atau 'N = 254 dari 66 perusahaan'),
+                                    # jika N tabel sudah cocok eksak di kalimat yang sama, jangan salahkan angka rinciannya!
+                                    has_verified_metric = True
+                                    continue
                                 same_pair_quads = [q for q, _ in quad_results if (q.variable_name, q.stat_type) == pair_key]
                                 eq_quads = [q for q in same_pair_quads if getattr(q, "operator", "EQ") == "EQ"]
                                 if len(eq_quads) >= 2 and len({q.numeric_value for q in eq_quads}) >= 2:
@@ -2176,6 +2182,27 @@ class CellLinker:
                                         continue
                                 except (ValueError, TypeError):
                                     pass
+
+                            # Guard klausa Total Responden di tabel demografi ('jumlah responden adalah 30, dan laki-laki adalah 19'):
+                            # jika angka cocok persis dengan baris Total/Jumlah tabel dan sebelum angka tersebut belum disebut nama kategori spesifik
+                            if quad.stat_type in ("N", "SUM") and quad_num is not None:
+                                raw_s_tot = str(getattr(quad, "raw_number_str", "") or "")
+                                pos_tot = claim_text.find(raw_s_tot) if raw_s_tot else -1
+                                pre_tot = claim_text[max(0, pos_tot - 45):pos_tot].lower() if pos_tot != -1 else ""
+                                if re.search(r"\b(?:jumlah|total)\s+(?:responden|sampel|data|keseluruhan)\b", pre_tot) and effective_row_label.lower() not in pre_tot:
+                                    matched_total_row = False
+                                    for r_t in tbl.get("rows", []):
+                                        if not r_t:
+                                            continue
+                                        rl_t = str(r_t[0].get("row_label") or r_t[0].get("raw_val") or "").strip().lower()
+                                        if rl_t in ("total", "jumlah", "total responden"):
+                                            for c_t in r_t:
+                                                if c_t.get("num_val") is not None and abs(float(c_t["num_val"]) - float(quad_num)) < 1e-4:
+                                                    matched_total_row = True
+                                                    break
+                                    if matched_total_row:
+                                        has_verified_metric = True
+                                        continue
 
                             # Guard baris ringkasan Total/Jumlah: jika baris adalah summary (Total/Jumlah = 100%)
                             if effective_row_label.strip().lower() in ("jumlah", "total", "total responden", "sum") and quad.stat_type in ("PERCENTAGE", "N"):
@@ -2422,31 +2449,48 @@ class CellLinker:
                             for quad, q_res in quad_results:
                                 if q_res.status in ("VALID_EXACT", "VALID_ROUNDED") and quad.stat_type == "MEAN":
                                     effective_n = None
-                                    n_match = re.search(r"\b(?:n|sampel|responden|subjek)\s*(?:sebesar|=|\:)?\s*(\d+)", claim_text, re.IGNORECASE)
-                                    if n_match:
-                                        try:
-                                            effective_n = int(n_match.group(1))
-                                        except (ValueError, TypeError):
-                                            pass
-                                    if effective_n is None:
-                                        effective_row_label = q_res.matched_row_label or matched_row or (row_labels[0] if row_labels else "")
-                                        for r in tbl.get("rows", []):
-                                            r_label = r[0].get("row_label") or r[0].get("raw_val")
-                                            if r_label and (r_label == effective_row_label or match_variable_row_score(quad.variable_name, r_label) >= 0.6):
-                                                for c_other in r:
-                                                    h_path = c_other.get("header_path", "").upper().strip()
-                                                    if h_path in ("N", "SAMPEL", "JUMLAH") and c_other.get("num_val") is not None:
-                                                        try:
-                                                            effective_n = int(c_other["num_val"])
-                                                            break
-                                                        except (ValueError, TypeError):
-                                                            pass
-                                                if effective_n is not None:
-                                                    break
-                                    if effective_n is None and detected_total_n:
-                                        effective_n = detected_total_n
+                                    row_has_non_integer_bounds = False
+                                    effective_row_label = q_res.matched_row_label or matched_row or (row_labels[0] if row_labels else "")
 
-                                    if effective_n is not None:
+                                    # Prioritas 1 (Otoritatif): Baca kolom N langsung dari baris tabel (termasuk header bertingkat 'Descriptive Statistics :: N')
+                                    for r in tbl.get("rows", []):
+                                        r_label = r[0].get("row_label") or r[0].get("raw_val")
+                                        if r_label and (r_label == effective_row_label or match_variable_row_score(quad.variable_name, r_label) >= 0.6):
+                                            for c_other in r:
+                                                h_raw = str(c_other.get("header_path") or "").strip()
+                                                h_leaf = h_raw.split("::")[-1].strip().upper()
+                                                mapped_col, _ = classify_column_header(h_raw)
+                                                if (mapped_col == "N" or h_leaf in ("N", "SAMPEL", "JUMLAH")) and c_other.get("num_val") is not None:
+                                                    try:
+                                                        effective_n = int(round(float(c_other["num_val"])))
+                                                    except (ValueError, TypeError):
+                                                        pass
+                                                elif mapped_col in ("MINIMUM", "MAXIMUM") and c_other.get("num_val") is not None:
+                                                    try:
+                                                        bv = float(c_other["num_val"])
+                                                        if abs(bv - round(bv)) > 1e-6:
+                                                            row_has_non_integer_bounds = True
+                                                    except (ValueError, TypeError):
+                                                        pass
+                                            if effective_n is not None:
+                                                break
+
+                                    # Prioritas 2: Baca N eksplisit di kalimat ('N = 20' atau 'untuk 100 responden') bila tabel tidak punya kolom N
+                                    if effective_n is None:
+                                        n_match = (
+                                            re.search(r"\b(?:n|sampel|responden|subjek)\s*(?:sebesar|=|\:)\s*(\d+)\b", claim_text, re.IGNORECASE)
+                                            or re.search(r"\b(\d+)\s+(?:orang\s+|buah\s+)?(?:responden|sampel|subjek|observasi)\b", claim_text, re.IGNORECASE)
+                                            or re.search(r"\b(?:n|sampel)\s+(\d+)\b", claim_text, re.IGNORECASE)
+                                        )
+                                        if n_match:
+                                            try:
+                                                effective_n = int(n_match.group(1))
+                                            except (ValueError, TypeError):
+                                                pass
+
+                                    # Jangan pernah menebak GRIM dari detected_total_n lintas bab jika baris/kalimat tidak punya N,
+                                    # dan jangan terapkan GRIM k=1 jika Minimum/Maximum terbukti desimal non-bulat!
+                                    if effective_n is not None and not row_has_non_integer_bounds:
                                         mean_val = float(q_res.table_cell_value if q_res.table_cell_value is not None else quad.raw_number_str.replace(",", "."))
                                         raw_val_str = str(q_res.table_cell_raw or quad.raw_number_str)
                                         row_lbl = q_res.matched_row_label or matched_row or ""
@@ -2744,7 +2788,11 @@ class CellLinker:
         # Check GRIM test ONLY when the claim text explicitly discusses a sample mean/average
         # and has an anchored link to a specific table cell reporting that mean.
         mean_match = re.search(r"\b(?:mean|rata-rata|rerata)\s*(?:sebesar|=|\:)?\s*([+-]?\d+[,.]\d+)", claim_text, re.IGNORECASE)
-        n_match = re.search(r"\b(?:n|sampel|responden|subjek)\s*(?:sebesar|=|\:)?\s*(\d+)", claim_text, re.IGNORECASE)
+        n_match = (
+            re.search(r"\b(?:n|sampel|responden|subjek)\s*(?:sebesar|=|\:)\s*(\d+)\b", claim_text, re.IGNORECASE)
+            or re.search(r"\b(\d+)\s+(?:orang\s+|buah\s+)?(?:responden|sampel|subjek|observasi)\b", claim_text, re.IGNORECASE)
+            or re.search(r"\b(?:n|sampel)\s+(\d+)\b", claim_text, re.IGNORECASE)
+        )
 
         if mean_match:
             try:
@@ -2756,21 +2804,29 @@ class CellLinker:
                     if tbl.get("table_type") == "SPSS_LIKERT_FREQ":
                         continue
                     for row in tbl["rows"]:
-                        effective_n = n_sample
+                        effective_n = None
+                        row_has_non_int_bounds = False
+                        for c_other in row:
+                            h_raw = str(c_other.get("header_path") or "").strip()
+                            h_leaf = h_raw.split("::")[-1].strip().upper()
+                            mapped_col, _ = classify_column_header(h_raw)
+                            if (mapped_col == "N" or h_leaf in ("N", "SAMPEL", "JUMLAH")) and c_other.get("num_val") is not None:
+                                try:
+                                    effective_n = int(round(float(c_other["num_val"])))
+                                except (ValueError, TypeError):
+                                    pass
+                            elif mapped_col in ("MINIMUM", "MAXIMUM") and c_other.get("num_val") is not None:
+                                try:
+                                    bv = float(c_other["num_val"])
+                                    if abs(bv - round(bv)) > 1e-6:
+                                        row_has_non_int_bounds = True
+                                except (ValueError, TypeError):
+                                    pass
                         if effective_n is None:
-                            for c_other in row:
-                                h_path = c_other.get("header_path", "").upper().strip()
-                                if h_path in ("N", "SAMPEL", "JUMLAH") and c_other.get("num_val") is not None:
-                                    try:
-                                        effective_n = int(c_other["num_val"])
-                                        break
-                                    except (ValueError, TypeError):
-                                        pass
-                        if effective_n is None and detected_total_n:
-                            effective_n = detected_total_n
+                            effective_n = n_sample
 
-                        # If sample size cannot be determined, abstain from GRIM (0% false positive)
-                        if effective_n is None:
+                        # If sample size cannot be determined or row has fractional bounds, abstain from GRIM (0% false positive)
+                        if effective_n is None or row_has_non_int_bounds:
                             continue
 
                         for c in row:

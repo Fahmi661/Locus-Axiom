@@ -56,14 +56,20 @@ def _is_numeric_cell_token(tok: str) -> bool:
 
 def is_text_label(val: Any) -> bool:
     """
-    Checks if a cell text is a descriptive text label (e.g. 'Kelas Kontrol', 'Skala Awal')
-    rather than purely numeric, percentage, dash, or empty symbol.
+    Checks if a cell text is a descriptive text label (e.g. 'Kelas Kontrol', 'Skala Awal', 'S1', '15 - 25')
+    rather than purely a scalar numeric value, percentage, dash, or empty symbol.
     """
     if val is None:
         return False
     v = str(val).strip()
     if not v or v in ("-", "--", "---", "/", ".", "NA", "N/A", "None", "NaN"):
         return False
+    # Accept education/group short codes like S1, S2, S3, D1..D4, X1..X9, Y1..Y9, Z1..Z9, H1..H9
+    if re.match(r"^[A-Za-z]{1,2}\d+(?:[._]\d+)?$", v):
+        return True
+    # Accept interval range labels like '15 - 25', '15 – 25', '< 20', '> 50'
+    if re.match(r"^\d+\s*[-–—]\s*\d+(?:\s*[a-zA-Z]+)?$", v):
+        return True
     # Reject pure numbers, decimals, percentages, or statistics with letter footnotes (e.g. 19, 80.00, .171, -.123, 74,03%, .144c)
     if re.match(r"^[<>]?\s*[+-]?(?:\d{1,3}(?:[.,]\d{3})*|\d+)(?:[.,]\d+)?\s*%?[a-z]?$", v, re.IGNORECASE):
         return False
@@ -295,9 +301,9 @@ class TableGeometryExtractor:
         if num_cols == 0:
             return [], 0
 
-        # Detect how many leading rows are header tiers (1..3, leaving >= 1 data row)
+        # Detect how many leading rows are header tiers (1..4, leaving >= 1 data row)
         header_row_count = 1
-        max_header_tiers = min(3, max(1, len(raw_data) - 1))
+        max_header_tiers = min(4, max(1, len(raw_data) - 1))
         for r_i in range(1, max_header_tiers):
             if has_sub_header(raw_data[r_i], num_cols):
                 header_row_count = r_i + 1
@@ -978,39 +984,45 @@ class TableGeometryExtractor:
                 is_empty_row = not any(str(c).strip() for c in row_raw if c is not None)
                 is_total_row = any(w in c0_text.lower() or w in c1_text.lower() or w in c2_text.lower() for w in ("total", "jumlah", "total responden", "sum"))
 
-                # 1. Vertical forward-fill kolom 0 dan kolom 1 (merged vertical cells)
-                if is_text_label(c0_text) and not is_total_row:
+                # 1. Vertical forward-fill kolom 0 dan kolom 1 (merged vertical cells),
+                # tetapi JANGAN forward-fill stub generik SPSS ('Model', '(Constant)', 'Valid', 'Missing')
+                _generic_stub_c0 = {"model", "(constant)", "constant", "valid", "missing"}
+                if is_text_label(c0_text) and not is_total_row and c0_text.lower().strip() not in _generic_stub_c0:
                     if parent_group != c0_text:
                         sub_parent_group = ""
                     parent_group = c0_text
                 elif not c0_text and parent_group and not is_total_row:
                     c0_text = parent_group
 
-                if is_text_label(c1_text) and not is_total_row:
+                if is_text_label(c1_text) and not is_total_row and c1_text.lower().strip() not in {"(constant)", "constant"}:
                     sub_parent_group = c1_text
                 elif not c1_text and sub_parent_group and not is_total_row:
                     c1_text = sub_parent_group
 
                 # 2. Composite row label jika ada label teks non-numerik di kolom 1 atau kolom 2
                 label_parts = []
-                for txt in (c0_text, c1_text, c2_text):
+                for idx_lp, txt in enumerate((c0_text, c1_text, c2_text)):
                     if is_text_label(txt) and not is_total_row:
+                        if idx_lp == 0 and txt.lower().strip() in _generic_stub_c0 and (is_text_label(c1_text) or is_text_label(c2_text)):
+                            continue
                         if not any(txt.lower() == p.lower() for p in label_parts):
                             label_parts.append(txt)
 
                 if len(label_parts) >= 2:
                     row_label = " - ".join(label_parts)
-                    last_valid_row_label = row_label
+                    if row_label.lower().strip() not in _generic_stub_c0:
+                        last_valid_row_label = row_label
                 elif len(label_parts) == 1:
                     row_label = label_parts[0]
-                    last_valid_row_label = row_label
+                    if row_label.lower().strip() not in _generic_stub_c0:
+                        last_valid_row_label = row_label
                 elif is_total_row:
                     row_label = c1_text if ("total" in c1_text.lower() or "jumlah" in c1_text.lower()) else (c0_text or "Total")
                     last_valid_row_label = row_label
                 elif last_valid_row_label:
                     sub_val = c1_text or c2_text
-                    # Jangan awali variabel regresi dengan nomor model numerik SPSS ('1 :: OPM' -> 'OPM')
-                    last_is_model_stub = bool(re.match(r"^(?:\d+|valid|missing|model)$", last_valid_row_label.strip(), re.IGNORECASE))
+                    # Jangan awali variabel regresi dengan nomor model/konstanta SPSS ('1 :: OPM' -> 'OPM', '(Constant) :: Z1' -> 'Z1')
+                    last_is_model_stub = bool(re.match(r"^(?:\d+|valid|missing|model|\(?constant\)?)$", last_valid_row_label.strip(), re.IGNORECASE))
                     if sub_val and last_is_model_stub:
                         row_label = sub_val
                     elif sub_val and (sub_val.isdigit() or len(sub_val) <= 12):
