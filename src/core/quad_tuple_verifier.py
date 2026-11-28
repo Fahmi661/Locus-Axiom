@@ -249,8 +249,9 @@ def parse_academic_number(raw: str) -> Optional[Tuple[float, int, bool]]:
 
 
 def normalize_variable_stem(name: str) -> str:
-    """Mengupas prefiks kode variabel regresi (X1_, X2_, Y_, Z_), transformasi SPSS (SQRT, LN, LOG) dan kata umum."""
-    s = name.lower().strip()
+    """Mengupas prefiks nomor model SPSS ('1 :: '), kode variabel regresi (X1_, X2_, Y_, Z_), transformasi SPSS (SQRT, LN, LOG) dan kata umum."""
+    s = re.sub(r"\s+", " ", name.replace("\n", " ")).lower().strip()
+    s = re.sub(r"^(?:\d+\s*::\s*)+", "", s)
     s = re.sub(r"\([^)]*\)", " ", s)
     s = re.sub(
         r"^(?:[xyz]\d*[_\-\s\.]+|variabel\s+|variable\s+|sqrt[_\s]*|ln[_\s]*|log10[_\s]*|log[_\s]*|abs[_\s]*|zscore[_\s]*)+",
@@ -500,6 +501,8 @@ def extract_quad_tuples_from_sentence(
         ignored_spans.append((m.start(), m.end()))
     for m in re.finditer(r"^\s*\d+(?:\.\d+)+\s+", s_lower):
         ignored_spans.append((m.start(), m.end()))
+    for m in re.finditer(r"(?:^|\s)\d+\)\s+", s_lower):
+        ignored_spans.append((m.start(), m.end()))
     for m in re.finditer(
         r"(?:\(\s*[a-zA-Z]{1,3}\s*\d+(?:[.,]\d+)*\s*\)|\b(?:[xyz]|item|indikator|hipotesis|h|k|spss|iso|d|s)\s*[\.\-]?\s*\d+(?:[.,]\d+)*\b|\b[xyz]\d+(?:\.\d+)+\b|\b\d+\s*[sS]\b)",
         s_lower,
@@ -542,10 +545,15 @@ def extract_quad_tuples_from_sentence(
             continue
         val, dec, is_pct = parsed
 
-        # Abaikan angka ambang batas baku (0.05, 0.01, 0.10, 0.1, 10.0) jika didahului penanda pembanding atau kriteria uji
-        if round(val, 4) in (0.05, 0.01, 0.1, 10.0):
-            left_45 = s_lower[max(0, c_start - 45):c_start]
-            if re.search(r"(?:lebih\s+besar(?:\s+dari)?|lebih\s+kecil(?:\s+dari)?|di\s+atas|di\s+bawah|kurang\s+dari|melebihi|alpha|α|taraf\s+signifikansi|tingkat\s+signifikansi|batas\s+kritis|ambang|>=|<=|>|<)\s*(?:pada|sebesar|=)?\s*$", left_45):
+        # Abaikan angka ambang batas baku (0.05, 0.01, 0.10, 0.1, 10.0, 5%) jika didahului penanda pembanding atau kriteria uji
+        if round(val, 4) in (0.05, 0.01, 0.1, 10.0) or (is_pct and round(val, 4) in (5.0, 1.0, 10.0)):
+            left_65 = s_lower[max(0, c_start - 65):c_start]
+            if re.search(
+                r"(?:lebih\s+besar(?:\s+dari)?|lebih\s+kecil(?:\s+dari)?|di\s*atas|di\s*bawah|kurang\s+dari|melebihi|"
+                r"alpha|α|taraf\s+signifikansi|tingkat\s+signifikansi|taraf\s+nyata|tingkat\s+kesalahan|batas\s+kritis|ambang|"
+                r">=|<=|>|<)(?:\s*\([^)]{0,15}\))?\s*(?:pada|sebesar|adalah|yaitu|yakni|di|untuk|=)?\s*$",
+                left_65,
+            ):
                 continue
 
         # Cek operator pertidaksamaan lokal di sebelah kiri angka (dibatasi sampai angka sebelumnya)

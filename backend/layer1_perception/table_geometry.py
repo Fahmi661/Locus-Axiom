@@ -768,6 +768,8 @@ class TableGeometryExtractor:
             else:
                 row_label = f"Baris_{r_idx+1}"
 
+            row_label = _norm_cell_ws(row_label.replace("\n", " "))
+
             for c_idx, (x_l, x_r) in enumerate(col_bounds):
                 matched = [c for c in d_cells if x_l <= (c["x0"] + c["x1"]) / 2.0 <= x_r]
                 if matched:
@@ -921,6 +923,8 @@ class TableGeometryExtractor:
                             else:
                                 row_label = f"Baris_{r_idx}_{sub_i+1}"
 
+                            row_label = _norm_cell_ws(row_label.replace("\n", " "))
+
                             row_cells = []
                             r_cells_objs_ml = table_rows_objs[r_idx].cells if r_idx < len(table_rows_objs) else []
                             for c_idx in range(num_cols):
@@ -1005,12 +1009,18 @@ class TableGeometryExtractor:
                     last_valid_row_label = row_label
                 elif last_valid_row_label:
                     sub_val = c1_text or c2_text
-                    if sub_val and (sub_val.isdigit() or len(sub_val) <= 12):
+                    # Jangan awali variabel regresi dengan nomor model numerik SPSS ('1 :: OPM' -> 'OPM')
+                    last_is_model_stub = bool(re.match(r"^(?:\d+|valid|missing|model)$", last_valid_row_label.strip(), re.IGNORECASE))
+                    if sub_val and last_is_model_stub:
+                        row_label = sub_val
+                    elif sub_val and (sub_val.isdigit() or len(sub_val) <= 12):
                         row_label = f"{last_valid_row_label} :: {sub_val}"
                     else:
                         row_label = last_valid_row_label
                 else:
                     row_label = f"Baris_{r_idx}"
+
+                row_label = _norm_cell_ws(row_label.replace("\n", " "))
 
                 row_cells = []
 
@@ -1113,8 +1123,74 @@ class TableGeometryExtractor:
 
     @staticmethod
     def stitch_cross_page_tables(tables: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Stitches genuinely split multi-page tables across consecutive pages (page N -> page N+1)
+        while strictly refusing to merge two independent tables that happen to share margins
+        and column counts (e.g. sequential SPSS Likert tables in Bab IV).
+        """
         if len(tables) <= 1:
             return tables
+
+        def _row_has_terminal_total(rows_list: List[Any]) -> bool:
+            if not rows_list:
+                return False
+            # Inspect the last non-empty row
+            for r in reversed(rows_list):
+                if not isinstance(r, list) or not r:
+                    continue
+                texts = []
+                for c in r[:3]:
+                    if isinstance(c, dict):
+                        t = str(c.get("raw_val") or c.get("text") or c.get("row_label") or "").strip().lower()
+                    else:
+                        t = str(c or "").strip().lower()
+                    if t:
+                        texts.append(t)
+                if not texts:
+                    continue
+                joined = " ".join(texts)
+                return bool(
+                    re.search(r"\b(?:total|jumlah|grand\s+total|total\s+responden|keseluruhan)\b", joined)
+                )
+            return False
+
+        def _is_distinct_next_table(curr_t: Dict[str, Any], nxt_t: Dict[str, Any]) -> bool:
+            nxt_cap = str(nxt_t.get("caption") or "").strip()
+            is_cont_cap = bool(re.search(r"\b(?:lanjutan|continued|cont\.|sambungan)\b", nxt_cap, re.IGNORECASE))
+            if is_cont_cap:
+                return False
+
+            # Guard 1: Distinct numbered normalized_id (e.g. '4.8' vs '4.9')
+            curr_nid = str(curr_t.get("normalized_id") or "").strip()
+            nxt_nid = str(nxt_t.get("normalized_id") or "").strip()
+            if nxt_nid and not nxt_nid.upper().startswith("OCR") and nxt_nid != curr_nid:
+                return True
+
+            # Guard 2: Explicit new table caption on nxt (e.g. 'Tabel IV.9 ...')
+            if nxt_cap and re.match(r"^(?:tabel|table)\s+(?:[IVX]+|\d+)", nxt_cap, re.IGNORECASE):
+                curr_cap = str(curr_t.get("caption") or "").strip()
+                if not curr_cap or nxt_cap.lower() != curr_cap.lower():
+                    return True
+
+            # Guard 3: curr already ended with a closing Total/Jumlah row
+            if _row_has_terminal_total(curr_t.get("rows", [])):
+                return True
+
+            # Guard 4: Spatial page-boundary check when page heights are known
+            curr_h = float(curr_t.get("page_height_pt") or 0.0)
+            nxt_h = float(nxt_t.get("page_height_pt") or 0.0)
+            curr_box = curr_t.get("bbox") or []
+            nxt_box = nxt_t.get("bbox") or []
+            if curr_h > 0.0 and len(curr_box) >= 4:
+                # A split table must reach near the bottom of page N (no large narrative block below it)
+                if float(curr_box[3]) < curr_h * 0.65:
+                    return True
+            if nxt_h > 0.0 and len(nxt_box) >= 4:
+                # Continuation on page N+1 must start near the top margin (not mid-page below new items)
+                if float(nxt_box[1]) > nxt_h * 0.35:
+                    return True
+
+            return False
 
         stitched: List[Dict[str, Any]] = []
         skip_indices = set()
@@ -1126,50 +1202,52 @@ class TableGeometryExtractor:
             if i + 1 < len(tables):
                 nxt = tables[i + 1]
                 if nxt.get("page") == curr.get("page", 0) + 1 and nxt.get("num_cols") == curr.get("num_cols"):
-                    curr_bbox = curr.get("bbox", [0, 0, 0, 0])
-                    nxt_bbox = nxt.get("bbox", [0, 0, 0, 0])
-                    if len(curr_bbox) >= 4 and len(nxt_bbox) >= 4:
-                        dx0 = abs(nxt_bbox[0] - curr_bbox[0])
-                        dx1 = abs(nxt_bbox[2] - curr_bbox[2])
-                        if dx0 <= 8.0 and dx1 <= 8.0:
-                            merged_rows = list(curr.get("rows", []))
-                            offset = len(merged_rows)
-                            for r_idx, r in enumerate(nxt.get("rows", [])):
-                                if isinstance(r, list):
-                                    for c_idx, cell in enumerate(r):
-                                        if isinstance(cell, dict):
-                                            cell["row"] = cell.get("row", r_idx + 1) + offset
-                                            cell["row_idx"] = cell.get("row_idx", r_idx) + offset
-                                            if "col" not in cell:
-                                                cell["col"] = c_idx + 1
-                                            if "col_idx" not in cell:
-                                                cell["col_idx"] = c_idx
-                                            if "text" not in cell and "raw_val" in cell:
-                                                cell["text"] = cell["raw_val"]
-                                            elif "raw_val" not in cell and "text" in cell:
-                                                cell["raw_val"] = cell["text"]
-                                        elif isinstance(cell, str):
-                                            r[c_idx] = {
-                                                "row": r_idx + 1 + offset,
-                                                "row_idx": r_idx + offset,
-                                                "col": c_idx + 1,
-                                                "col_idx": c_idx,
-                                                "text": cell,
-                                                "raw_val": cell,
-                                                "bbox": None,
-                                                "cell_rect": None,
-                                                "bbox_approx": True
-                                            }
-                                merged_rows.append(r)
+                    if not _is_distinct_next_table(curr, nxt):
+                        curr_bbox = curr.get("bbox", [0, 0, 0, 0])
+                        nxt_bbox = nxt.get("bbox", [0, 0, 0, 0])
+                        if len(curr_bbox) >= 4 and len(nxt_bbox) >= 4:
+                            dx0 = abs(nxt_bbox[0] - curr_bbox[0])
+                            dx1 = abs(nxt_bbox[2] - curr_bbox[2])
+                            if dx0 <= 8.0 and dx1 <= 8.0:
+                                merged_rows = list(curr.get("rows", []))
+                                offset = len(merged_rows)
+                                for r_idx, r in enumerate(nxt.get("rows", [])):
+                                    if isinstance(r, list):
+                                        for c_idx, cell in enumerate(r):
+                                            if isinstance(cell, dict):
+                                                cell["row"] = cell.get("row", r_idx + 1) + offset
+                                                cell["row_idx"] = cell.get("row_idx", r_idx) + offset
+                                                if "col" not in cell:
+                                                    cell["col"] = c_idx + 1
+                                                if "col_idx" not in cell:
+                                                    cell["col_idx"] = c_idx
+                                                if "text" not in cell and "raw_val" in cell:
+                                                    cell["text"] = cell["raw_val"]
+                                                elif "raw_val" not in cell and "text" in cell:
+                                                    cell["raw_val"] = cell["text"]
+                                            elif isinstance(cell, str):
+                                                r[c_idx] = {
+                                                    "row": r_idx + 1 + offset,
+                                                    "row_idx": r_idx + offset,
+                                                    "col": c_idx + 1,
+                                                    "col_idx": c_idx,
+                                                    "text": cell,
+                                                    "raw_val": cell,
+                                                    "bbox": None,
+                                                    "cell_rect": None,
+                                                    "bbox_approx": True
+                                                }
+                                    merged_rows.append(r)
 
-                            merged_table = dict(curr)
-                            merged_table["rows"] = merged_rows
-                            merged_table["num_rows"] = len(merged_rows)
-                            merged_table["is_cross_page"] = True
-                            merged_table["stitched_pages"] = [curr.get("page", 1), nxt.get("page", 1)]
-                            stitched.append(merged_table)
-                            skip_indices.add(i + 1)
-                            continue
+                                merged_table = dict(curr)
+                                merged_table["rows"] = merged_rows
+                                merged_table["num_rows"] = len(merged_rows)
+                                merged_table["is_cross_page"] = True
+                                merged_table["stitched_pages"] = [curr.get("page", 1), nxt.get("page", 1)]
+                                merged_table["absorbed_table_ids"] = list(curr.get("absorbed_table_ids", [])) + [nxt.get("table_id")]
+                                stitched.append(merged_table)
+                                skip_indices.add(i + 1)
+                                continue
 
             stitched.append(curr)
 

@@ -289,6 +289,8 @@ class FastPdfReader:
             current_section_variable: Optional[str] = None
             last_page_table_id: Optional[str] = None
             last_table_page: Optional[int] = None
+            pending_unfinished_claim: Optional[Dict[str, Any]] = None
+            pending_unfinished_page: Optional[int] = None
 
             for page_idx, page in enumerate(pdf.pages, start=1):
                 if cancel_event and cancel_event.is_set():
@@ -520,75 +522,148 @@ class FastPdfReader:
 
                 # Assemble into tight sentence-level claims and formula clauses
                 curr_tokens: List[Dict[str, Any]] = []
+                crossed_item_barrier_after_table_idx: Optional[int] = None
+                crossed_item_barrier_before_any_table: bool = False
+                is_first_claim_on_page: bool = True
 
-                def _flush_claim(tokens: List[Dict[str, Any]], is_formula: bool = False):
+                def _flush_claim(tokens: List[Dict[str, Any]], is_formula: bool = False, end_of_page: bool = False) -> Optional[Dict[str, Any]]:
+                    nonlocal pending_unfinished_claim, pending_unfinished_page, is_first_claim_on_page
                     if not tokens:
-                        return
+                        return None
                     sent = " ".join(t["text"] for t in tokens).strip()
+                    # Strip stray inline parenthetical source footnotes at start/end of claim text
+                    sent = re.sub(r"^\(\s*(?:Sumber|Source)\s*[:\-][^)]*\)\s*", "", sent, flags=re.IGNORECASE).strip()
                     min_len = 6 if is_formula else 15
-                    if len(sent) >= min_len:
-                        tok_lines = _group_words_into_visual_lines(tokens)
+                    if len(sent) < min_len:
+                        return None
 
-                        line_boxes = []
-                        tok_boxes = []
-                        for tl in tok_lines:
-                            lx0 = min(float(t["x0"]) for t in tl)
-                            ltop = min(float(t["top"]) for t in tl)
-                            lx1 = max(float(t["x1"]) for t in tl)
-                            lbottom = max(float(t["bottom"]) for t in tl)
-                            if lx1 > lx0 and lbottom > ltop:
-                                line_boxes.append([round(lx0, 1), round(ltop, 1), round(lx1, 1), round(lbottom, 1)])
-                            for t in tl:
-                                tx0 = round(float(t["x0"]), 1)
-                                ttop = round(float(t["top"]), 1)
-                                tx1 = round(float(t["x1"]), 1)
-                                tbot = round(float(t["bottom"]), 1)
-                                if tx1 > tx0 and tbot > ttop:
-                                    tok_boxes.append([str(t["text"]), tx0, ttop, tx1, tbot])
+                    tok_lines = _group_words_into_visual_lines(tokens)
 
-                        if not line_boxes:
-                            return
+                    line_boxes = []
+                    tok_boxes = []
+                    for tl in tok_lines:
+                        lx0 = min(float(t["x0"]) for t in tl)
+                        ltop = min(float(t["top"]) for t in tl)
+                        lx1 = max(float(t["x1"]) for t in tl)
+                        lbottom = max(float(t["bottom"]) for t in tl)
+                        if lx1 > lx0 and lbottom > ltop:
+                            line_boxes.append([round(lx0, 1), round(ltop, 1), round(lx1, 1), round(lbottom, 1)])
+                        for t in tl:
+                            tx0 = round(float(t["x0"]), 1)
+                            ttop = round(float(t["top"]), 1)
+                            tx1 = round(float(t["x1"]), 1)
+                            tbot = round(float(t["bottom"]), 1)
+                            if tx1 > tx0 and tbot > ttop:
+                                tok_boxes.append([str(t["text"]), tx0, ttop, tx1, tbot])
 
-                        x0 = min(b[0] for b in line_boxes)
-                        top = min(b[1] for b in line_boxes)
-                        x1 = max(b[2] for b in line_boxes)
-                        bottom = max(b[3] for b in line_boxes)
+                    if not line_boxes:
+                        return None
 
-                        # Tentukan claim_scope_table_id: pilih tabel terakhir di page_tables yang t["bbox"][1] <= top + 10
-                        candidate_tables = [
-                            t for t in page_tables
-                            if len(t.get("bbox", [])) >= 4 and t["bbox"][1] <= (top + 10.0)
-                        ]
-                        if candidate_tables:
-                            claim_scope_table_id = candidate_tables[-1].get("table_id")
-                        elif last_page_table_id and last_table_page == (page_idx - 1) and top <= 250.0:
-                            claim_scope_table_id = last_page_table_id
-                        else:
+                    x0 = min(b[0] for b in line_boxes)
+                    top = min(b[1] for b in line_boxes)
+                    x1 = max(b[2] for b in line_boxes)
+                    bottom = max(b[3] for b in line_boxes)
+
+                    # Tentukan claim_scope_table_id dengan memperhatikan pemutus butir/sub-bab baru
+                    candidate_tables = [
+                        (t_i, t) for t_i, t in enumerate(page_tables)
+                        if len(t.get("bbox", [])) >= 4 and t["bbox"][1] <= (top + 10.0)
+                    ]
+                    below_tables = [
+                        t for t in page_tables
+                        if len(t.get("bbox", [])) >= 4 and t["bbox"][1] > (top + 10.0)
+                    ]
+                    if candidate_tables:
+                        last_above_idx, last_above_tbl = candidate_tables[-1]
+                        if crossed_item_barrier_after_table_idx == last_above_idx:
+                            # Butir kuesioner / sub-bab baru muncul setelah tabel sebelumnya ->
+                            # jangan wariskan scope tabel lama!
                             claim_scope_table_id = None
+                        else:
+                            claim_scope_table_id = last_above_tbl.get("table_id")
+                    elif (
+                        last_page_table_id
+                        and last_table_page == (page_idx - 1)
+                        and not crossed_item_barrier_before_any_table
+                    ):
+                        # Paragraf pembahasan lanjutan dari tabel halaman sebelumnya (tanpa batas kaku 250pt)
+                        # selama belum melewati tabel baru atau butir/sub-bab baru.
+                        claim_scope_table_id = last_page_table_id
+                    else:
+                        claim_scope_table_id = None
 
-                        all_claims.append({
-                            "claim_id": f"C_{page_idx}_{len(all_claims)+1}",
-                            "page": page_idx,
-                            "page_width_pt": round(vis_w, 2),
-                            "page_height_pt": round(vis_h, 2),
-                            "text": sent,
-                            "chapter": current_chapter,
-                            "section_heading": current_section_heading,
-                            "section_variable": current_section_variable,
-                            "scope_table_id": claim_scope_table_id,
-                            "bbox": [round(x0, 1), round(top, 1), round(x1, 1), round(bottom, 1)],
-                            "claim_y_top": round(top, 1),
-                            "boxes": line_boxes,
-                            "claim_rects": line_boxes,
-                            "tok_boxes": tok_boxes,
-                            "is_formula": is_formula
-                        })
+                    # Record next table below on same page for forward-introductory sentences ("sebagai berikut:")
+                    next_table_below_id = below_tables[0].get("table_id") if below_tables else None
+
+                    claim_obj: Dict[str, Any] = {
+                        "claim_id": f"C_{page_idx}_{len(all_claims)+1}",
+                        "page": page_idx,
+                        "page_width_pt": round(vis_w, 2),
+                        "page_height_pt": round(vis_h, 2),
+                        "text": sent,
+                        "chapter": current_chapter,
+                        "section_heading": current_section_heading,
+                        "section_variable": current_section_variable,
+                        "scope_table_id": claim_scope_table_id,
+                        "next_table_id": next_table_below_id,
+                        "is_item_barrier": bool(
+                            re.match(r"^(?:\d+\)|[a-z]\)|\(\d+\)|\d+\.\d+(?:\.\d+)*\s+[A-Z]|BAB\s+[IVX\d]+)", sent, re.IGNORECASE)
+                        ),
+                        "bbox": [round(x0, 1), round(top, 1), round(x1, 1), round(bottom, 1)],
+                        "claim_y_top": round(top, 1),
+                        "boxes": line_boxes,
+                        "claim_rects": line_boxes,
+                        "tok_boxes": tok_boxes,
+                        "is_formula": is_formula
+                    }
+
+                    # Cross-page unfinished sentence bridging:
+                    # If the previous page ended mid-sentence (without terminal punctuation) and this
+                    # first claim on page_idx continues with a lowercase word/punctuation before any new table:
+                    if (
+                        is_first_claim_on_page
+                        and pending_unfinished_claim is not None
+                        and pending_unfinished_page == (page_idx - 1)
+                        and not candidate_tables
+                        and not crossed_item_barrier_before_any_table
+                        and sent
+                        and (sent[0].islower() or sent[0] in (",", ";", ")"))
+                    ):
+                        # Bridge the severed boundary phrase onto previous page's claim (only up to first comma/period)
+                        # so a split clause like "7 responden (7%) menyatakan" + "netral" stays intact on page N
+                        # without duplicating subsequent clauses on page N+1.
+                        head_frag_m = re.match(r"^([^.,;!?]{1,40})", sent)
+                        if head_frag_m:
+                            head_frag = head_frag_m.group(1).strip()
+                            if head_frag and not re.search(r"\d", head_frag):
+                                pending_unfinished_claim["audit_text"] = (
+                                    pending_unfinished_claim["text"].rstrip() + " " + head_frag
+                                )
+                        # Carry table scope & explicit table reference onto page N+1 continuation claim
+                        if pending_unfinished_claim.get("scope_table_id"):
+                            claim_obj["scope_table_id"] = pending_unfinished_claim["scope_table_id"]
+                        claim_obj["continued_from_claim_id"] = pending_unfinished_claim.get("claim_id")
+                        claim_obj["continued_from_text"] = pending_unfinished_claim.get("text", "")
+                        pending_unfinished_claim = None
+                        pending_unfinished_page = None
+                    elif is_first_claim_on_page:
+                        pending_unfinished_claim = None
+                        pending_unfinished_page = None
+
+                    is_first_claim_on_page = False
+                    all_claims.append(claim_obj)
+
+                    if end_of_page and not sent.endswith((".", "!", "?", ":")):
+                        pending_unfinished_claim = claim_obj
+                        pending_unfinished_page = page_idx
+
+                    return claim_obj
 
                 last_line_bottom: Optional[float] = None
                 for line in lines:
                     line_text = " ".join(w["text"] for w in line).strip()
-                    # Skip table captions or standalone headers
-                    if re.match(r"^(Tabel\s+(?:[IVX]+|\d+)|Sumber\s*:|Hasil\s+Uji)", line_text, re.IGNORECASE):
+                    # Skip table captions, source footnotes (including parenthesized '(Sumber: ...)'), or standalone headers
+                    if re.match(r"^(?:\(?\s*(?:Sumber|Source)\s*[:\-]|Tabel\s+(?:[IVX]+|\d+)\b|Hasil\s+Uji\b)", line_text, re.IGNORECASE):
                         continue
 
                     line_top = float(line[0]["top"])
@@ -610,16 +685,21 @@ class FastPdfReader:
                     if re.match(r"^BAB\s+([IVX]+|\d+)\b", line_text, re.IGNORECASE):
                         last_page_table_id = None
                         last_table_page = None
+                        pending_unfinished_claim = None
+                        pending_unfinished_page = None
 
                     # Only flush across lines if there is a GENUINE paragraph gap (> 20pt, exceeding 1.5 line spacing)
-                    # or an explicit new heading/section number
+                    # or an explicit new heading/section number or numbered survey item ('3) ...', 'a) ...')
                     m_sec_hd = re.match(r"^(\d+\.\d+(?:\.\d+)*)\s+([A-Za-z\s]{2,40})$", line_text)
                     if m_sec_hd:
                         current_section_heading = line_text
                         current_section_variable = m_sec_hd.group(2).strip()
 
-                    is_new_section_or_item = bool(
-                        re.match(r"^(\d+(\.\d+)*\s+[A-Z]|Bab\s+[IVX]+|[A-Z][a-z0-9\s\-]+:|\d+\.\s+[A-Z]|[a-z]\.\s+[A-Z])", line_text)
+                    is_numbered_item_barrier = bool(
+                        re.match(r"^(?:\d+\)\s+|[a-z]\)\s+|\(\d+\)\s+|\d+\.\d+(?:\.\d+)*\s+[A-Z]|Bab\s+[IVX]+)", line_text, re.IGNORECASE)
+                    )
+                    is_new_section_or_item = is_numbered_item_barrier or bool(
+                        re.match(r"^(\d+(\.\d+)*\s+[A-Z]|[A-Z][a-z0-9\s\-]+:|\d+\.\s+[A-Z]|[a-z]\.\s+[A-Z])", line_text)
                     )
                     if curr_tokens and (
                         (last_line_bottom is not None and (line_top - last_line_bottom) > 20.0)
@@ -627,6 +707,18 @@ class FastPdfReader:
                     ):
                         _flush_claim(curr_tokens, is_formula=False)
                         curr_tokens = []
+
+                    if is_numbered_item_barrier:
+                        # Mark barrier so numbered prompts / new sub-sections above the next table
+                        # do NOT inherit the previous table's scope_table_id.
+                        above_tbl_indices = [
+                            t_i for t_i, t in enumerate(page_tables)
+                            if len(t.get("bbox", [])) >= 4 and t["bbox"][1] <= (line_top + 10.0)
+                        ]
+                        if above_tbl_indices:
+                            crossed_item_barrier_after_table_idx = above_tbl_indices[-1]
+                        else:
+                            crossed_item_barrier_before_any_table = True
 
                     last_line_bottom = max(float(w["bottom"]) for w in line)
 
@@ -671,15 +763,26 @@ class FastPdfReader:
                         curr_tokens = []
 
                 if curr_tokens:
-                    _flush_claim(curr_tokens, is_formula=False)
+                    _flush_claim(curr_tokens, is_formula=False, end_of_page=True)
                     curr_tokens = []
 
                 if page_tables:
                     last_page_table_id = page_tables[-1].get("table_id")
                     last_table_page = page_idx
 
-        # Stitch cross-page tables
+        # Stitch cross-page tables & remap any claim scope_table_id / next_table_id that pointed to an absorbed continuation table
         stitched_tables = TableGeometryExtractor.stitch_cross_page_tables(all_tables)
+        absorbed_map: Dict[str, str] = {}
+        for st_t in stitched_tables:
+            for abs_id in st_t.get("absorbed_table_ids", []):
+                if abs_id:
+                    absorbed_map[str(abs_id)] = str(st_t.get("table_id"))
+        if absorbed_map:
+            for cl in all_claims:
+                if cl.get("scope_table_id") in absorbed_map:
+                    cl["scope_table_id"] = absorbed_map[cl["scope_table_id"]]
+                if cl.get("next_table_id") in absorbed_map:
+                    cl["next_table_id"] = absorbed_map[cl["next_table_id"]]
 
         return {
             "num_pages": num_pages,

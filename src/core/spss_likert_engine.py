@@ -141,26 +141,34 @@ def resolve_table_with_ref_check(
     claim_y_top: float,
     all_tables: List[Dict],
     scope_table_id: Optional[str] = None,
+    next_table_id: Optional[str] = None,
+    active_discussion_table_id: Optional[str] = None,
 ) -> Tuple[Optional[Dict], Optional[Dict]]:
     """
-    Menyelesaikan target tabel untuk sebuah klaim dengan pengecekan salah ketik rujukan tabel:
+    Menyelesaikan target tabel untuk sebuah klaim dengan isolasi teritorial tabel & pengecekan salah ketik rujukan:
     1. Cari local_table: tabel dengan table_id == scope_table_id, atau tabel terdekat di atas claim_y_top
        pada halaman yang sama (atau tabel terakhir halaman sebelumnya jika klaim di puncak halaman).
-    2. Cari explicit_id = normalize_table_id(sentence) dan explicit_table yang cocok.
-    3. Jika explicit_table dan local_table BERBEDA: hitung berapa angka pada sentence yang cocok dengan sel-sel
-       di local_table vs explicit_table.
-    4. Jika local_table punya kecocokan angka LEBIH TINGGI dari explicit_table (minimal >= 2 angka cocok di local_table),
-       pilih local_table sebagai chosen_table dan isi ref_typo_info.
-    5. Jika tidak, gunakan explicit_table (atau local_table jika tidak ada rujukan eksplisit).
+    2. Jika kalimat adalah pengantar ke bawah ('sebagai berikut', 'di bawah ini') tanpa ID eksplisit,
+       utamakan next_table_id (tabel tepat di bawah paragraf).
+    3. Cari explicit_id = normalize_table_id(sentence) dan explicit_table yang cocok.
+    4. Jika explicit_table dan local_table BERBEDA: hitung kecocokan pasangan (kategori/baris, nilai)
+       secara kontekstual (khususnya untuk tabel Likert SPSS) agar angka kebetulan/tahun/kumulatif
+       tidak menipu detektor salah rujuk.
+    5. Jika local_table tidak tersedia dan tidak ada ID eksplisit, gunakan active_discussion_table_id
+       dari blok pembahasan yang sama (propagasi jangkar paragraf).
     """
-    # 1. Cari local_table
-    local_table = None
-    if scope_table_id:
+    def _find_table_by_id(tid: Optional[str], max_page_dist: int = 3) -> Optional[Dict]:
+        if not tid:
+            return None
+        tid_s = str(tid).strip()
         for t in all_tables:
-            if t.get("table_id") == scope_table_id or t.get("normalized_id") == scope_table_id:
-                if abs(t.get("page", 0) - claim_page) <= 1:
-                    local_table = t
-                    break
+            if str(t.get("table_id") or "") == tid_s or str(t.get("normalized_id") or "") == tid_s:
+                if abs(int(t.get("page", 0)) - claim_page) <= max_page_dist:
+                    return t
+        return None
+
+    # 1. Cari local_table
+    local_table = _find_table_by_id(scope_table_id, max_page_dist=2)
 
     if not local_table:
         same_page_tables = []
@@ -209,67 +217,117 @@ def resolve_table_with_ref_check(
 
     # Cek apakah kalimat merupakan kalimat pengantar tabel di bawahnya
     s_low = sentence.lower()
-    intro_phrases = (
+    forward_intro_phrases = (
+        "sebagai berikut",
+        "berikut ini",
+        "di bawah ini",
+        "dibawah ini",
+        "pada tabel berikut",
+    )
+    intro_phrases = forward_intro_phrases + (
         "dapat dilihat pada",
         "disajikan pada",
         "disajikan dalam",
         "terlihat pada",
-        "sebagai berikut",
-        "berikut ini",
     )
     if any(p in s_low for p in intro_phrases):
         if explicit_table:
             return explicit_table, None
-        return local_table, None
+        if any(p in s_low for p in forward_intro_phrases) and next_table_id:
+            below_tbl = _find_table_by_id(next_table_id, max_page_dist=1)
+            if below_tbl:
+                return below_tbl, None
+        return local_table or _find_table_by_id(active_discussion_table_id, max_page_dist=3), None
 
-    # 3 & 4. Periksa kecocokan angka jika explicit_table dan local_table BERBEDA
+    # 3 & 4. Periksa kecocokan pasangan (kategori/sel, nilai) jika explicit_table dan local_table BERBEDA
     if explicit_table and local_table and (explicit_table.get("table_id") != local_table.get("table_id")):
-        raw_tokens = re.findall(r"(?:^|\s|\()([+-]?(?:\d+[,.]\d+|\d+|[,.]\d+))%?(?:\s|\)|$|[.,;:])", sentence)
-        sentence_numbers = []
-        for tok in raw_tokens:
-            c = tok.strip().replace("%", "")
-            c = re.sub(r"^([+-]?)[,.](\d+)$", r"\g<1>0.\g<2>", c).replace(",", ".")
-            try:
-                sentence_numbers.append(float(c))
-            except ValueError:
-                pass
+        # Bersihkan catatan kaki sumber & tahun sebelum mengekstrak angka kalimat
+        clean_sent = re.sub(r"\(\s*(?:Sumber|Source)\s*[:\-][^)]*\)", " ", sentence, flags=re.IGNORECASE)
 
-        def _count_matches(tbl: Dict) -> int:
-            tbl_nums = set()
-            for r in tbl.get("rows", []):
-                for cell in r:
-                    if isinstance(cell, dict):
-                        nv = cell.get("num_val")
-                        if nv is not None:
+        def _count_likert_pair_matches(tbl: Dict) -> Optional[int]:
+            hdrs = list(tbl.get("header_paths", []))
+            raw_rows = [
+                [str(c.get("raw_val") if isinstance(c, dict) and c.get("raw_val") is not None else ("" if isinstance(c, dict) else c)) for c in r]
+                for r in tbl.get("rows", []) if isinstance(r, list)
+            ]
+            if not is_spss_frequency_table(hdrs, raw_rows):
+                return None
+            parsed_tbl = parse_spss_frequency_table(hdrs, raw_rows)
+            if not parsed_tbl:
+                return None
+            l_claims = extract_likert_claims_by_clause(clean_sent)
+            if not l_claims:
+                return None
+            matched = 0
+            for lc in l_claims:
+                row_obj = parsed_tbl.get(lc.category_code)
+                if not row_obj:
+                    continue
+                exp_v = row_obj.cells.get(lc.metric_type)
+                if exp_v is not None and abs(lc.claimed_value - exp_v) < 0.05:
+                    matched += 1
+            return matched
+
+        lik_local = _count_likert_pair_matches(local_table)
+        lik_explicit = _count_likert_pair_matches(explicit_table)
+
+        if lik_local is not None and lik_explicit is not None:
+            local_matches = lik_local
+            explicit_matches = lik_explicit
+        else:
+            raw_tokens = re.findall(r"(?:^|\s|\()([+-]?(?:\d+[,.]\d+|\d+|[,.]\d+))%?(?:\s|\)|$|[.,;:])", clean_sent)
+            sentence_numbers = []
+            for tok in raw_tokens:
+                c = tok.strip().replace("%", "")
+                c = re.sub(r"^([+-]?)[,.](\d+)$", r"\g<1>0.\g<2>", c).replace(",", ".")
+                try:
+                    fv = float(c)
+                    # Abaikan tahun 1900..2099 agar tidak menipu penghitung kecocokan tabel
+                    if 1900 <= fv <= 2099 and fv.is_integer():
+                        continue
+                    sentence_numbers.append(fv)
+                except ValueError:
+                    pass
+
+            def _count_matches(tbl: Dict) -> int:
+                tbl_nums = set()
+                for r in tbl.get("rows", []):
+                    for cell in r:
+                        if isinstance(cell, dict):
+                            hp = str(cell.get("header_path") or "").lower()
+                            if "cumulative" in hp or "kumulatif" in hp:
+                                continue
+                            nv = cell.get("num_val")
+                            if nv is not None:
+                                try:
+                                    tbl_nums.add(round(float(nv), 4))
+                                except Exception:
+                                    pass
+                            raw = cell.get("raw_val") or cell.get("text")
+                            if raw is not None:
+                                try:
+                                    rc = str(raw).strip().replace("%", "")
+                                    rc = re.sub(r"^([+-]?)[,.](\d+)$", r"\g<1>0.\g<2>", rc).replace(",", ".")
+                                    tbl_nums.add(round(float(rc), 4))
+                                except Exception:
+                                    pass
+                        elif isinstance(cell, (int, float)):
+                            tbl_nums.add(round(float(cell), 4))
+                        elif isinstance(cell, str):
                             try:
-                                tbl_nums.add(round(float(nv), 4))
-                            except Exception:
-                                pass
-                        raw = cell.get("raw_val") or cell.get("text")
-                        if raw is not None:
-                            try:
-                                rc = str(raw).strip().replace("%", "")
+                                rc = cell.strip().replace("%", "")
                                 rc = re.sub(r"^([+-]?)[,.](\d+)$", r"\g<1>0.\g<2>", rc).replace(",", ".")
                                 tbl_nums.add(round(float(rc), 4))
                             except Exception:
                                 pass
-                    elif isinstance(cell, (int, float)):
-                        tbl_nums.add(round(float(cell), 4))
-                    elif isinstance(cell, str):
-                        try:
-                            rc = cell.strip().replace("%", "")
-                            rc = re.sub(r"^([+-]?)[,.](\d+)$", r"\g<1>0.\g<2>", rc).replace(",", ".")
-                            tbl_nums.add(round(float(rc), 4))
-                        except Exception:
-                            pass
-            cnt = 0
-            for sn in sentence_numbers:
-                if any(abs(sn - tn) < 0.02 for tn in tbl_nums):
-                    cnt += 1
-            return cnt
+                cnt = 0
+                for sn in sentence_numbers:
+                    if any(abs(sn - tn) < 0.02 for tn in tbl_nums):
+                        cnt += 1
+                return cnt
 
-        local_matches = _count_matches(local_table)
-        explicit_matches = _count_matches(explicit_table)
+            local_matches = _count_matches(local_table)
+            explicit_matches = _count_matches(explicit_table)
 
         if local_matches > explicit_matches and local_matches >= 2:
             chosen_table = local_table
@@ -285,8 +343,10 @@ def resolve_table_with_ref_check(
         chosen_table = explicit_table
     elif explicit_id and not explicit_table:
         chosen_table = None
-    else:
+    elif local_table:
         chosen_table = local_table
+    else:
+        chosen_table = _find_table_by_id(active_discussion_table_id, max_page_dist=3)
 
     return chosen_table, None
 
@@ -522,12 +582,17 @@ def parse_spss_frequency_table(headers: List[str], rows: List[List[str]]) -> Dic
                 cells_raw["FREQUENCY"] = numeric_cells[0][1]
 
         if cells_val:
-            cleaned_rows[canonical_code] = CleanedSPSSRow(
-                row_code=canonical_code,
-                raw_label=raw_label,
-                cells=cells_val,
-                raw_cells=cells_raw,
-            )
+            # Never let a later appended/stray duplicate row overwrite an already parsed category
+            if canonical_code not in cleaned_rows:
+                cleaned_rows[canonical_code] = CleanedSPSSRow(
+                    row_code=canonical_code,
+                    raw_label=raw_label,
+                    cells=cells_val,
+                    raw_cells=cells_raw,
+                )
+            # Stop after closing TOTAL row once at least one category has been parsed
+            if canonical_code == "TOTAL" and len(cleaned_rows) >= 2:
+                break
 
     return cleaned_rows
 
