@@ -15,7 +15,7 @@
 
 `/ KRI-TE-RON /` - dikembangkan untuk **Hackvidia Arkavidia 11.0 (HMIF ITB)**, Subtema 4: *Learning & Self-Growth*
 
-[Mulai Cepat](#mulai-cepat) | [Cara Pakai](#cara-pakai) | [Arsitektur](#arsitektur) | [API](#dokumentasi-api) | [Kontribusi](#kontribusi)
+[Mulai Cepat](#mulai-cepat) | [Tampilan Antarmuka](#tampilan-antarmuka) | [Cara Pakai](#cara-pakai) | [Arsitektur](#arsitektur) | [API](#dokumentasi-api) | [Kontribusi](#kontribusi)
 
 </div>
 
@@ -60,6 +60,36 @@ Hasil: keputusan validitas dihitung deterministik (bukan ditebak model), dengan 
 - **Explain-First Scaffolding** - kuis MCQ edukatif sebelum saran revisi.
 - **Sertifikat Audit SHA-256** - tanda terima digital dengan PII yang disamarkan.
 - **Non-blocking + progress realtime + pembatalan nyata** untuk dokumen 20-60 halaman.
+
+---
+
+## Tampilan Antarmuka
+
+Kriteron menyediakan dua halaman utama berbasis web offline (`frontend/index.html` dan `frontend/studio.html`):
+
+### 1. Halaman Depan (`/app/index.html` atau `/`)
+
+Halaman pengantar sekaligus pintu masuk unggah dokumen dan simulasi studi kasus:
+
+| Bagian | Isi & Fungsi |
+| :--- | :--- |
+| **Top Navigation Bar** | Logo & brand (`LOCUS`), navigasi bagian (`Presets`, `Cara Kerja`, `Solver`, `Benchmark`), badge versi mesin (`LOCUS Engine v3.5-grounded`), tombol **Unggah PDF**, dan tombol **Buka Studio**. |
+| **Hero Section & Preview Demo** | Headline utama, subjudul, tombol aksi **Buka Studio** & **Lihat Presets**, strip status (`100% offline (local)`, `8 solver deterministik`, `SHA-256 Receipt`), serta jendela preview demo (`LOCUS_demo.gif`) dan simulasi interaktif. |
+| **3 Golden Presets Siap Uji (`#presets`)** | Tiga studi kasus siap coba tanpa unggah PDF:<br>1. **Evaluasi Model ML (Inversi RMSE)** — `RMSE 3.45` vs baseline `2.67`<br>2. **Uji Prasyarat Normalitas (Kolmogorov-Smirnov)** — `p = 0,012 < 0,05` (Tolak $H_0$)<br>3. **Uji-t Eksperimen Hasil Belajar Siswa** — *Decision Flip* `p = 0,002` vs rekalkulasi SciPy `p = 0,019`<br>Setiap kartu memiliki tombol **Coba simulasi** dan **Buka Studio ↗**. |
+| **Alur Verifikasi 3 Langkah (`#cara-kerja`)** | Penjelasan ringkas alur kerja: **1. Unggah** → **2. Audit deterministik** → **3. Terima Receipt SHA-256**. |
+| **Grid 8 Solver Deterministik (`#solver`)** | Daftar 8 mesin verifikasi SciPy (`table_prose_sync`, `metric_polarity`, `normality_trap`, `statcheck_recalc`, `round_half_up`, `degrees_of_freedom`, `cronbach_alpha`, `sha256_audit_receipt`) lengkap dengan badge status (`Fatal`, `Peringatan`, `Konsisten`). |
+| **CTA & Footer** | Tombol cepat **Mulai Audit** & **Jelajahi Studi Kasus**, serta tautan navigasi footer. |
+| **Modal Progres Audit Real-Time** | Muncul saat PDF diunggah: menampilkan persentase progres, *timeline* 6 tahap (`Deteksi tabel` → `Pemisahan klaim` → `Ekspansi variabel` → `Penautan semantik` → `Solver deterministik` → `Sintesis bukti`), timer CPU lokal (`127.0.0.1`), dan tombol **Batalkan**. |
+
+### 2. Halaman Prediksi / Audit Studio X-Ray (`/app/studio.html`)
+
+Ruang kerja *dual-pane* untuk memeriksa hasil prediksi/audit PDF secara berdampingan:
+
+| Area | Komponen & Fitur |
+| :--- | :--- |
+| **Top Bar Studio** | Tautan kembali **Beranda**, chip nama file PDF aktif, navigasi halaman (`‹ Hal / Total ›`), kontrol zoom (`−`, `100%`, `+`, `Fit`), badge versi engine, tombol **Unggah PDF**, dan tombol **Laporan Audit** (ekspor JSON bertanda SHA-256 bebas PII). |
+| **Panel Kiri: Kanvas X-Ray PDF (SVG Overlay)** | - **Render PDF presisi (72-DPI SVG `viewBox`)** dengan dukungan *drag-and-drop* file PDF langsung ke kanvas.<br>- **Sorotan klaim & token angka:** garis sorot per baris kalimat (`claim_rects`) dan kotak tegas tepat di angka yang diklaim (`value_rect`).<br>- **Sorotan tabel & sel bukti:** batas tabel rujukan dan kotak sel bukti (`cell_rect`; garis putus-putus jika koordinat perkiraan).<br>- **Kurva Bezier Penghubung:** panah melengkung di margin kiri yang menghubungkan kalimat klaim ke sel tabel bukti pada halaman yang sama.<br>- **Navigasi Lintas Halaman:** pill mengambang di margin (`Bukti Hal. X ↗`) dan banner bawah (`Lihat Bukti di Hal. X ↗` / `← Kembali ke Teks`) saat klaim dan tabel berada di halaman berbeda. |
+| **Panel Kanan: Inspektor Temuan** | - **Header & Tab Filter:** total temuan, tab **Semua / Fatal / Peringatan / Konsisten**, dan banner ringkasan pola dominan.<br>- **Kartu Temuan Interaktif:** judul status (titik merah/kuning/hijau), nomor halaman, **3 pill konteks** (`Tabel`, `Baris`, `Kolom`), dan kotak perbandingan **Di teks vs Di tabel**.<br>- **Detail Bukti & Penjelasan:** penjelasan human-readable, kutipan kalimat asli dengan angka tersorot, **Socratic Hint (Panduan Telaah)**, jalur bukti (`Tabel -> Baris -> Kolom`), cuplikan baris tabel (**Lompat ke tabel ↗**), dan rumus rekalkulasi SciPy.<br>- **Aksi Kartu:** tombol **Terima koreksi**, **Abaikan**, dan **Salin bukti**. |
 
 ---
 
